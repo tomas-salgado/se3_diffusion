@@ -358,10 +358,9 @@ class Sampler:
             '38',
             '--batch_size',
             '1',
+            '--device',
+            '0'
         ]
-        if self._infer_conf.gpu_id is not None:
-            pmpnn_args.append('--device')
-            pmpnn_args.append(str(self._infer_conf.gpu_id))
 
         while ret < 0 or not os.path.exists(mpnn_fasta_path):
             try:
