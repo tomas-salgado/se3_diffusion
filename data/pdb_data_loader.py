@@ -499,3 +499,45 @@ class DistributedTrainSampler(data.Sampler):
             epoch (int): Epoch number.
         """
         self.epoch = epoch
+
+
+class MDEnhancedPdbDataset(PdbDataset):
+    def __init__(self, data_conf, diffuser, is_training, md_trajectory_path=None):
+        super().__init__(data_conf, diffuser, is_training)
+        self.md_trajectory = None
+        if md_trajectory_path:
+            # Load MD trajectory data
+            md_data = np.load(md_trajectory_path)
+            self.md_trajectory = md_data['positions']
+            
+    def _init_metadata(self):
+        """Override to handle both PDB and MD data"""
+        # First load PDB metadata as normal
+        super()._init_metadata()
+        
+        # If we have MD data, augment the dataset
+        if self.md_trajectory is not None:
+            # Create additional entries in self.csv for MD frames
+            md_metadata = pd.DataFrame({
+                'pdb_name': ['MD_frame_{}'.format(i) for i in range(len(self.md_trajectory))],
+                'modeled_seq_len': self.md_trajectory.shape[1] // 3,  # Divide by 3 for N, CA, C atoms
+                'processed_path': 'md_trajectory',  # Special flag to use MD data
+            })
+            self.csv = pd.concat([self.csv, md_metadata])
+
+    def _process_csv_row(self, processed_file_path):
+        """Override to handle both PDB and MD data"""
+        if processed_file_path == 'md_trajectory':
+            # Handle MD frame
+            frame_idx = int(self.csv.iloc[self._current_idx]['pdb_name'].split('_')[-1])
+            frame_coords = self.md_trajectory[frame_idx]
+            
+            # Convert to chain features format
+            chain_feats = {
+                'aatype': torch.zeros(frame_coords.shape[0] // 3).long(),  # Placeholder
+                'atom37_pos': torch.from_numpy(frame_coords).float(),
+                'res_mask': torch.ones(frame_coords.shape[0] // 3).float(),
+            }
+            return chain_feats
+        else:
+            return super()._process_csv_row(processed_file_path)
