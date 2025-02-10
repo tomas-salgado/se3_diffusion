@@ -319,6 +319,14 @@ class Sampler:
             f'--output_path={output_path}',
         ])
         _ = process.wait()
+        
+        # Expected output path
+        mpnn_fasta_path = os.path.join(
+            decoy_pdb_dir,
+            'seqs',
+            os.path.basename(reference_pdb_path).replace('.pdb', '.fa')
+        )
+        
         num_tries = 0
         ret = -1
         pmpnn_args = [
@@ -340,7 +348,8 @@ class Sampler:
         if self._infer_conf.gpu_id is not None:
             pmpnn_args.append('--device')
             pmpnn_args.append(str(self._infer_conf.gpu_id))
-        while ret < 0:
+
+        while ret < 0 or not os.path.exists(mpnn_fasta_path):
             try:
                 process = subprocess.Popen(
                     pmpnn_args,
@@ -348,17 +357,20 @@ class Sampler:
                     stderr=subprocess.STDOUT
                 )
                 ret = process.wait()
+                
+                # Wait a bit to ensure file is written
+                if ret == 0:
+                    time.sleep(1)
+                    
             except Exception as e:
+                ret = -1
+                
+            if not os.path.exists(mpnn_fasta_path):
                 num_tries += 1
-                self._log.info(f'Failed ProteinMPNN. Attempt {num_tries}/5')
+                self._log.info(f'Failed ProteinMPNN or missing output. Attempt {num_tries}/5')
                 torch.cuda.empty_cache()
                 if num_tries > 4:
-                    raise e
-        mpnn_fasta_path = os.path.join(
-            decoy_pdb_dir,
-            'seqs',
-            os.path.basename(reference_pdb_path).replace('.pdb', '.fa')
-        )
+                    raise RuntimeError(f"ProteinMPNN failed to generate output file after 5 attempts: {mpnn_fasta_path}")
 
         # Run ESMFold on each ProteinMPNN sequence and calculate metrics.
         mpnn_results = {
