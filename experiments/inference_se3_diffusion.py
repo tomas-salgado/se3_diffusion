@@ -317,8 +317,19 @@ class Sampler:
             f'{self._pmpnn_dir}/helper_scripts/parse_multiple_chains.py',
             f'--input_path={decoy_pdb_dir}',
             f'--output_path={output_path}',
-        ])
-        _ = process.wait()
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = process.communicate()
+        
+        # Log parse step output
+        self._log.info(f'Parse step stdout: {stdout.decode()}')
+        if stderr:
+            self._log.error(f'Parse step stderr: {stderr.decode()}')
+        
+        if not os.path.exists(output_path):
+            self._log.error(f'Failed to generate parsed_pdbs.jsonl')
+            self._log.info(f'Contents of {decoy_pdb_dir}:')
+            self._log.info(str(os.listdir(decoy_pdb_dir)))
+            raise RuntimeError(f"Failed to parse PDB file")
         
         # Expected output path
         mpnn_fasta_path = os.path.join(
@@ -326,6 +337,9 @@ class Sampler:
             'seqs',
             os.path.basename(reference_pdb_path).replace('.pdb', '.fa')
         )
+        
+        # Create seqs directory
+        os.makedirs(os.path.join(decoy_pdb_dir, 'seqs'), exist_ok=True)
         
         num_tries = 0
         ret = -1
@@ -351,26 +365,46 @@ class Sampler:
 
         while ret < 0 or not os.path.exists(mpnn_fasta_path):
             try:
+                # Capture output instead of discarding it
                 process = subprocess.Popen(
                     pmpnn_args,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.STDOUT
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
                 )
-                ret = process.wait()
+                stdout, stderr = process.communicate()
+                ret = process.returncode
+                
+                # Log the output
+                self._log.info(f'ProteinMPNN stdout: {stdout.decode()}')
+                if stderr:
+                    self._log.error(f'ProteinMPNN stderr: {stderr.decode()}')
                 
                 # Wait a bit to ensure file is written
                 if ret == 0:
                     time.sleep(1)
                     
             except Exception as e:
+                self._log.error(f'ProteinMPNN exception: {str(e)}')
                 ret = -1
                 
             if not os.path.exists(mpnn_fasta_path):
                 num_tries += 1
                 self._log.info(f'Failed ProteinMPNN or missing output. Attempt {num_tries}/5')
+                self._log.info(f'Expected output path: {mpnn_fasta_path}')
+                self._log.info(f'Contents of {decoy_pdb_dir}:')
+                self._log.info(str(os.listdir(decoy_pdb_dir)))
+                if os.path.exists(os.path.join(decoy_pdb_dir, 'seqs')):
+                    self._log.info(f'Contents of {os.path.join(decoy_pdb_dir, "seqs")}:')
+                    self._log.info(str(os.listdir(os.path.join(decoy_pdb_dir, 'seqs'))))
+                
                 torch.cuda.empty_cache()
                 if num_tries > 4:
-                    raise RuntimeError(f"ProteinMPNN failed to generate output file after 5 attempts: {mpnn_fasta_path}")
+                    raise RuntimeError(
+                        f"ProteinMPNN failed to generate output file after 5 attempts.\n"
+                        f"Expected: {mpnn_fasta_path}\n"
+                        f"Command: {' '.join(pmpnn_args)}\n"
+                        f"Working dir: {os.getcwd()}"
+                    )
 
         # Run ESMFold on each ProteinMPNN sequence and calculate metrics.
         mpnn_results = {
