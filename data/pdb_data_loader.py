@@ -561,6 +561,9 @@ class MDEnhancedPdbDataset(PdbDataset):
                 'res_mask': torch.ones(n_residues).float(),
                 'seq_idx': torch.arange(n_residues).long() + 1,  # 1-based residue indices
                 'torsion_angles_sin_cos': torch.zeros(n_residues, 7, 2).float(),  # 7 torsion angles, each as (sin, cos)
+                'rigids_t': torch.zeros(n_residues, 7).float(),  # Current rigid body transform
+                'sc_ca_t': torch.zeros(n_residues, 3).float(),  # Self-conditioning CA positions
+                'seq_mask': torch.ones(n_residues).float(),  # Sequence mask (same as res_mask for MD)
             }
             
             # Fill in the backbone atoms (N, CA, C) in their correct positions in atom37
@@ -574,6 +577,9 @@ class MDEnhancedPdbDataset(PdbDataset):
                 chain_feats['atom37_mask'][i, 0] = 1.0  # N
                 chain_feats['atom37_mask'][i, 1] = 1.0  # CA
                 chain_feats['atom37_mask'][i, 2] = 1.0  # C
+                
+                # Store CA positions for self-conditioning
+                chain_feats['sc_ca_t'][i] = torch.from_numpy(frame_coords[i * 3 + 1])
                 
                 # Calculate torsion angles if not at the ends of the chain
                 if i > 0 and i < n_residues - 1:
@@ -594,6 +600,15 @@ class MDEnhancedPdbDataset(PdbDataset):
                     chain_feats['torsion_angles_sin_cos'][i, 0, 1] = torch.cos(torch.tensor(phi))
                     chain_feats['torsion_angles_sin_cos'][i, 2, 0] = torch.sin(torch.tensor(psi))
                     chain_feats['torsion_angles_sin_cos'][i, 2, 1] = torch.cos(torch.tensor(psi))
+            
+            # Initialize rigid body transforms from backbone atoms
+            bb_pos = chain_feats['atom37_pos'][:, :3].clone()  # Get N, CA, C positions
+            gt_bb_rigid = rigid_utils.Rigid.from_3_points(
+                bb_pos[:, 0],  # N
+                bb_pos[:, 1],  # CA
+                bb_pos[:, 2],  # C
+            )
+            chain_feats['rigids_t'] = gt_bb_rigid.to_tensor_7()
             
             return chain_feats
         else:
