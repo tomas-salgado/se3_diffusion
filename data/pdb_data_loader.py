@@ -559,6 +559,7 @@ class MDEnhancedPdbDataset(PdbDataset):
                 'atom37_pos': torch.zeros(n_residues, 37, 3).float(),  # Initialize full atom37 array
                 'atom37_mask': torch.zeros(n_residues, 37).float(),  # Initialize atom37 mask
                 'res_mask': torch.ones(n_residues).float(),
+                'seq_idx': torch.arange(n_residues).long() + 1,  # 1-based residue indices
             }
             
             # Fill in the backbone atoms (N, CA, C) in their correct positions in atom37
