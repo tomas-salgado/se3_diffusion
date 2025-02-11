@@ -9,48 +9,13 @@ image = modal.Image.micromamba()
 image = (
     image
     .apt_install("git", "wget")
-    .pip_install(
-        "gdown",
-        "antlr4-python3-runtime==4.9.3",
-        "biopython==1.80",
-        "blessed==1.20.0",
-        "click==8.1.3",
-        "contextlib2==21.6.0",
-        "deepspeed==0.8.0",
-        "docker-pycreds==0.4.0",
-        "fair-esm==2.0.0",
-        "gitdb==4.0.10",
-        "gitpython==3.1.30",
-        "gpustat==1.0.0",
-        "gputil==1.4.0",
-        "hjson==3.1.0",
-        "hydra-core==1.3.1",
-        "hydra-joblib-launcher==1.2.0",
-        "joblib==1.2.0",
-        "ml-collections==0.1.1",
-        "ninja==1.11.1",
-        "numpy==1.22.4",
-        "nvidia-ml-py==11.495.46",
-        "omegaconf==2.3.0",
-        "pathtools==0.1.2",
-        "protobuf==4.21.12",
-        "py-cpuinfo==9.0.0",
-        "pydantic==1.10.4",
-        "scikit-learn==1.2.1",
-        "sentry-sdk==1.15.0",
-        "setproctitle==1.3.2",
-        "smmap==5.0.0",
-        "threadpoolctl==3.1.0",
-        "tmtools==0.0.2",
-        "tqdm==4.64.1",
-        "wandb==0.13.10"
-    )
+    .pip_install("gdown")  
     .run_commands(
         # Add timestamp as comment to force rebuild
         "echo '# Build timestamp: {}' > /dev/null".format(int(time.time())),
         "git clone https://github.com/tomas-salgado/se3_diffusion",
-        # Install in development mode
-        "cd se3_diffusion && pip install -e ."
+        "cd se3_diffusion && micromamba env create -f se3.yml",
+        "cd se3_diffusion && micromamba run -n se3 pip install -e ."
     )
 )
 
