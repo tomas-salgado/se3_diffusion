@@ -545,17 +545,25 @@ class MDEnhancedPdbDataset(PdbDataset):
             # Handle MD frame
             frame_idx = int(self.csv.iloc[self._current_idx]['pdb_name'].split('_')[-1])
             frame_coords = self.md_trajectory[frame_idx]  # Shape should be (226, 3)
+            
+            # The coordinates are already in the format we need (226 atoms, 3 coords)
+            # We just need to ensure it's properly organized as (N, CA, C) triplets
             n_residues = frame_coords.shape[0] // 3
             
-            # Reshape coordinates to separate residues and atoms
-            frame_coords = frame_coords.reshape(n_residues, 3, 3)  # Shape: (n_res, 3 atoms, 3 coords)
-            
-            # Convert to chain features format - now using the reshaped coordinates
+            # Convert to chain features format
             chain_feats = {
                 'aatype': torch.zeros(n_residues).long(),  # Placeholder
-                'atom37_pos': torch.from_numpy(frame_coords.reshape(-1, 3)).float(),  # Flatten back to (n_res * 3, 3)
+                'atom37_pos': torch.zeros(37 * n_residues, 3).float(),  # Initialize full atom37 array
                 'res_mask': torch.ones(n_residues).float(),
             }
+            
+            # Fill in the backbone atoms (N, CA, C) in their correct positions in atom37
+            for i in range(n_residues):
+                # In atom37 format, N is index 0, CA is index 1, C is index 2
+                chain_feats['atom37_pos'][i * 37 + 0] = torch.from_numpy(frame_coords[i * 3 + 0])  # N
+                chain_feats['atom37_pos'][i * 37 + 1] = torch.from_numpy(frame_coords[i * 3 + 1])  # CA
+                chain_feats['atom37_pos'][i * 37 + 2] = torch.from_numpy(frame_coords[i * 3 + 2])  # C
+            
             return chain_feats
         else:
             return super()._process_csv_row(processed_file_path)
@@ -577,10 +585,14 @@ class MDEnhancedPdbDataset(PdbDataset):
 
         # For MD data, we need to create the rigid groups
         if processed_file_path == 'md_trajectory':
-            # Get number of residues from the atom positions
             n_residues = len(chain_feats['res_mask'])
-            # Reshape atom positions to (n_res, 3 atoms, 3 coords)
-            bb_pos = chain_feats['atom37_pos'].reshape(n_residues, 3, 3)
+            # Extract N, CA, C positions for each residue
+            bb_pos = torch.zeros(n_residues, 3, 3)
+            for i in range(n_residues):
+                bb_pos[i, 0] = chain_feats['atom37_pos'][i * 37 + 0]  # N
+                bb_pos[i, 1] = chain_feats['atom37_pos'][i * 37 + 1]  # CA
+                bb_pos[i, 2] = chain_feats['atom37_pos'][i * 37 + 2]  # C
+            
             gt_bb_rigid = rigid_utils.Rigid.from_3_points(
                 bb_pos[:, 0],  # N
                 bb_pos[:, 1],  # CA
