@@ -7,7 +7,7 @@ experiment:
   batch_size: 32
   sample_mode: time_batch
   learning_rate: 0.00001  # Lower learning rate for fine-tuning
-  warm_start: ./weights/paper/paper_weights.pth  # Pre-trained weights
+  warm_start: ./weights/paper  # Pre-trained weights
   use_warm_start_conf: True
   num_gpus: 1
   max_epochs: 100  # Adjust based on convergence
