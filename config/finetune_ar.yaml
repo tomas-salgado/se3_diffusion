@@ -10,18 +10,23 @@ experiment:
   warm_start: ./weights/paper  # Pre-trained weights
   use_warm_start_conf: True
   num_gpus: 1
-  max_epochs: 100  # Adjust based on convergence
-  eval_epochs: 5   # Evaluate every 5 epochs
-  ckpt_epochs: 5   # Save checkpoint every 5 epochs
+  max_epochs: 20  # Reduced from 100 to 20 for faster runtime
+  eval_epochs: 10  # Only evaluate twice (at epoch 10 and 20)
+  ckpt_epochs: 20  # Only save final checkpoint
   num_loader_workers: 4
   use_wandb: True
   wandb_project: "se3-diffusion-ar"
+  early_ckpt: False  # Disable early checkpoint evaluation
   
 data:
   md_trajectory_path: Tau5R2R3_backbone.npz  # Update this path to your AR npz file
   split_train_val: 0.9  # Use 90% for training, 10% for validation
   max_squared_res: 64000  # Will be automatically determined from AR structure size
   csv_path: null  # Disable PDB dataset loading
+  
+  # Minimal validation set
+  samples_per_eval_length: 1  # Only 1 sample per length
+  num_eval_lengths: 2  # Only evaluate 2 different lengths
   
   # Disable all PDB filtering settings since we're only using MD data
   filtering:
