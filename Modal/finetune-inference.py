@@ -4,18 +4,13 @@ import time
 app = modal.App("se3-diffusion")
 volume = modal.Volume.from_name("se3-outputs", create_if_missing=True)
 
-# Create base image with timestamp to force rebuild
-stub = modal.Stub("se3-diffusion-" + str(int(time.time())))
+# Create base image
 image = modal.Image.micromamba()
 image = (
     image
     .apt_install("git")
     .pip_install("gdown")  # Add gdown for Google Drive downloads
     .run_commands(
-        # Add timestamp to force rebuild
-        f"echo '# Build timestamp: {int(time.time())}' > /dev/null",
-        # Remove any existing repo to ensure fresh clone
-        "rm -rf se3_diffusion",
         # Clone the repository
         "git clone https://github.com/tomas-salgado/se3_diffusion",
         # Create conda environment from yml file
@@ -55,8 +50,6 @@ def run_inference():
     # Run inference script with modified output directory and skip ProteinMPNN
     os.system(
         "micromamba run -n se3 python experiments/inference_se3_diffusion.py "
-        "inference.output_dir=./finetune_inference_outputs/ "
-        "inference.pmpnn_dir=none"  # Set to none to skip ProteinMPNN
     )
     
     # Move results to mounted volume and commit
