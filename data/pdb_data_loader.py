@@ -555,3 +555,67 @@ class MDEnhancedPdbDataset(PdbDataset):
             return chain_feats
         else:
             return super()._process_csv_row(processed_file_path)
+
+    def __getitem__(self, idx):
+        # Store the current index for use in _process_csv_row
+        self._current_idx = idx
+        
+        # Sample data example
+        csv_row = self.csv.iloc[idx]
+        processed_file_path = csv_row['processed_path']
+        chain_feats = self._process_csv_row(processed_file_path)
+
+        # Use a fixed seed for evaluation
+        if self.is_training:
+            rng = np.random.default_rng(None)
+        else:
+            rng = np.random.default_rng(idx)
+
+        # For MD data, we need to create the rigid groups
+        if processed_file_path == 'md_trajectory':
+            # Create rigid groups from atom positions
+            bb_pos = chain_feats['atom37_pos'].reshape(-1, 3, 3)  # Reshape to (N_res, 3 atoms, 3 coords)
+            gt_bb_rigid = rigid_utils.Rigid.from_3_points(
+                bb_pos[:, 0],  # N
+                bb_pos[:, 1],  # CA
+                bb_pos[:, 2],  # C
+            )
+        else:
+            gt_bb_rigid = rigid_utils.Rigid.from_tensor_4x4(chain_feats['rigidgroups_0'])[:, 0]
+
+        diffused_mask = np.ones_like(chain_feats['res_mask'])
+        if np.sum(diffused_mask) < 1:
+            raise ValueError('Must be diffused')
+        fixed_mask = 1 - diffused_mask
+        chain_feats['fixed_mask'] = fixed_mask
+        chain_feats['rigids_0'] = gt_bb_rigid.to_tensor_7()
+        chain_feats['sc_ca_t'] = torch.zeros_like(gt_bb_rigid.get_trans())
+
+        # Sample t and diffuse
+        if self.is_training:
+            t = rng.uniform(self._data_conf.min_t, 1.0)
+            diff_feats_t = self._diffuser.forward_marginal(
+                rigids_0=gt_bb_rigid,
+                t=t,
+                diffuse_mask=None
+            )
+        else:
+            t = 1.0
+            diff_feats_t = self.diffuser.sample_ref(
+                n_samples=gt_bb_rigid.shape[0],
+                impute=gt_bb_rigid,
+                diffuse_mask=None,
+                as_tensor_7=True,
+            )
+        chain_feats.update(diff_feats_t)
+        chain_feats['t'] = t
+
+        # Convert all features to tensors
+        final_feats = tree.map_structure(
+            lambda x: x if torch.is_tensor(x) else torch.tensor(x), chain_feats)
+        final_feats = du.pad_feats(final_feats, csv_row['modeled_seq_len'])
+        
+        if self.is_training:
+            return final_feats
+        else:
+            return final_feats, csv_row['pdb_name']
