@@ -4,31 +4,32 @@ defaults:
 
 experiment:
   name: ar_finetune
-  batch_size: 32
+  batch_size: 16  # Smaller batch size for more stable finetuning
   sample_mode: time_batch
-  learning_rate: 0.00001  # Lower learning rate for fine-tuning
+  learning_rate: 0.000005  # Even lower learning rate (5e-6) for more stable finetuning
   warm_start: ./weights/paper  # Pre-trained weights
   use_warm_start_conf: True
   num_gpus: 1
-  max_epochs: 20  # Reduced from 100 to 20 for faster runtime
-  eval_epochs: 10  # Only evaluate twice (at epoch 10 and 20)
-  ckpt_epochs: 20  # Only save final checkpoint
+  max_epochs: 50  # Increased epochs but with early stopping
+  eval_epochs: 5   # More frequent evaluation
+  ckpt_epochs: 5   # Save checkpoints more frequently
   num_loader_workers: 4
   use_wandb: True
   wandb_project: "se3-diffusion-ar"
-  early_ckpt: False  # Disable early checkpoint evaluation
+  early_ckpt: True  # Enable early checkpoint evaluation
+  early_stop_patience: 10  # Stop if no improvement for 10 evaluations
   
 data:
-  md_trajectory_path: Tau5R2R3_backbone.npz  # Update this path to your AR npz file
-  split_train_val: 0.9  # Use 90% for training, 10% for validation
-  max_squared_res: 64000  # Will be automatically determined from AR structure size
-  csv_path: null  # Disable PDB dataset loading
+  md_trajectory_path: Tau5R2R3_backbone.npz  # Your AR npz file
+  split_train_val: 0.9
+  max_squared_res: 64000
+  csv_path: null
   
-  # Minimal validation set
-  samples_per_eval_length: 1  # Only 1 sample per length
-  num_eval_lengths: 2  # Only evaluate 2 different lengths
+  # Increased validation set for better monitoring
+  samples_per_eval_length: 2
+  num_eval_lengths: 3
   
-  # Disable all PDB filtering settings since we're only using MD data
+  # Disable PDB filtering settings
   filtering:
     allowed_oligomer: null
     max_len: null
@@ -37,4 +38,10 @@ data:
     max_loop_percent: null
     min_beta_percent: null
     rog_quantile: null
-    subset: null 
+    subset: null
+
+# Add noise schedule settings for finetuning
+diffuser:
+  noise_scale: 0.9  # Slightly reduced noise for finetuning
+  min_t: 0.01
+  max_t: 1.0 
