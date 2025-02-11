@@ -30,7 +30,6 @@ image = (
     gpu="T4",
     timeout=3600,
     volumes={"/outputs": volume},
-    force_build=True  # Force rebuild of the container
 )
 def run_inference():
     import os
