@@ -98,6 +98,13 @@ class Experiment:
         if conf.experiment.warm_start:
             ckpt_dir = conf.experiment.warm_start
             self._log.info(f'Warm starting from: {ckpt_dir}')
+            print("\nCurrent working directory:", os.getcwd())
+            print("\nContents of weights directory:")
+            if os.path.exists('./weights'):
+                files = os.listdir('./weights')
+                print("Files found:", files)
+            else:
+                print("weights directory does not exist")
             ckpt_files = [
                 x for x in os.listdir(ckpt_dir)
                 if 'pkl' in x or '.pth' in x
