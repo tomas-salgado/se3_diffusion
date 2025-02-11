@@ -503,13 +503,21 @@ class DistributedTrainSampler(data.Sampler):
 
 class MDEnhancedPdbDataset(PdbDataset):
     def __init__(self, data_conf, diffuser, is_training, md_trajectory_path=None):
-        super().__init__(data_conf, diffuser, is_training)
+        # Properly pass arguments to parent class
+        super(MDEnhancedPdbDataset, self).__init__(data_conf=data_conf, 
+                                                  diffuser=diffuser, 
+                                                  is_training=is_training)
         self.md_trajectory = None
         if md_trajectory_path:
             # Load MD trajectory data
-            md_data = np.load(md_trajectory_path)
-            self.md_trajectory = md_data['positions']
-            
+            try:
+                md_data = np.load(md_trajectory_path)
+                self.md_trajectory = md_data['positions']
+                self._log.info(f"Loaded MD trajectory with shape {self.md_trajectory.shape}")
+            except Exception as e:
+                self._log.error(f"Failed to load MD trajectory from {md_trajectory_path}: {str(e)}")
+                raise
+
     def _init_metadata(self):
         """Override to handle both PDB and MD data"""
         # First load PDB metadata as normal
