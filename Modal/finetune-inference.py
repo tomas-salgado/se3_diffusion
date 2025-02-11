@@ -1,15 +1,21 @@
 import modal
+import time
 
 app = modal.App("se3-diffusion")
 volume = modal.Volume.from_name("se3-outputs", create_if_missing=True)
 
-# Create base image
+# Create base image with timestamp to force rebuild
+stub = modal.Stub("se3-diffusion-" + str(int(time.time())))
 image = modal.Image.micromamba()
 image = (
     image
     .apt_install("git")
     .pip_install("gdown")  # Add gdown for Google Drive downloads
     .run_commands(
+        # Add timestamp to force rebuild
+        f"echo '# Build timestamp: {int(time.time())}' > /dev/null",
+        # Remove any existing repo to ensure fresh clone
+        "rm -rf se3_diffusion",
         # Clone the repository
         "git clone https://github.com/tomas-salgado/se3_diffusion",
         # Create conda environment from yml file
@@ -23,13 +29,17 @@ image = (
     image=image,
     gpu="T4",
     timeout=3600,
-    volumes={"/outputs": volume}
+    volumes={"/outputs": volume},
+    force_build=True  # Force rebuild of the container
 )
 def run_inference():
     import os
     import shutil
     from pathlib import Path
     import gdown
+    
+    # Remove any existing repo to ensure fresh clone
+    os.system("rm -rf se3_diffusion")
     
     # Clone repository again for function execution
     os.system("git clone https://github.com/tomas-salgado/se3_diffusion")
