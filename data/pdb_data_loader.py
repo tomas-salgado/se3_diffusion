@@ -503,11 +503,13 @@ class DistributedTrainSampler(data.Sampler):
 
 class MDEnhancedPdbDataset(PdbDataset):
     def __init__(self, data_conf, diffuser, is_training, md_trajectory_path=None):
-        # Properly pass arguments to parent class
-        super(MDEnhancedPdbDataset, self).__init__(data_conf=data_conf, 
-                                                  diffuser=diffuser, 
-                                                  is_training=is_training)
+        # Initialize basic attributes without calling parent's __init__
+        self._log = logging.getLogger(__name__)
+        self._is_training = is_training
+        self._data_conf = data_conf
+        self._diffuser = diffuser
         self.md_trajectory = None
+        
         if md_trajectory_path:
             # Load MD trajectory data
             try:
@@ -517,21 +519,25 @@ class MDEnhancedPdbDataset(PdbDataset):
             except Exception as e:
                 self._log.error(f"Failed to load MD trajectory from {md_trajectory_path}: {str(e)}")
                 raise
+        
+        # Initialize metadata
+        self._init_metadata()
 
     def _init_metadata(self):
-        """Override to handle both PDB and MD data"""
-        # First load PDB metadata as normal
-        super()._init_metadata()
-        
-        # If we have MD data, augment the dataset
+        """Override to handle MD data without requiring PDB data"""
         if self.md_trajectory is not None:
-            # Create additional entries in self.csv for MD frames
+            # Create metadata DataFrame for MD frames only
             md_metadata = pd.DataFrame({
-                'pdb_name': ['MD_frame_{}'.format(i) for i in range(len(self.md_trajectory))],
+                'pdb_name': [f'MD_frame_{i}' for i in range(len(self.md_trajectory))],
                 'modeled_seq_len': self.md_trajectory.shape[1] // 3,  # Divide by 3 for N, CA, C atoms
                 'processed_path': 'md_trajectory',  # Special flag to use MD data
             })
-            self.csv = pd.concat([self.csv, md_metadata])
+            self.csv = md_metadata
+            self._log.info(f"Created metadata for {len(self.csv)} MD frames")
+        else:
+            # If no MD data and no PDB data, create empty DataFrame
+            self.csv = pd.DataFrame(columns=['pdb_name', 'modeled_seq_len', 'processed_path'])
+            self._log.warning("No MD trajectory provided, dataset will be empty")
 
     def _process_csv_row(self, processed_file_path):
         """Override to handle both PDB and MD data"""
