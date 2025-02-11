@@ -544,13 +544,17 @@ class MDEnhancedPdbDataset(PdbDataset):
         if processed_file_path == 'md_trajectory':
             # Handle MD frame
             frame_idx = int(self.csv.iloc[self._current_idx]['pdb_name'].split('_')[-1])
-            frame_coords = self.md_trajectory[frame_idx]
+            frame_coords = self.md_trajectory[frame_idx]  # Shape should be (226, 3)
+            n_residues = frame_coords.shape[0] // 3
             
-            # Convert to chain features format
+            # Reshape coordinates to separate residues and atoms
+            frame_coords = frame_coords.reshape(n_residues, 3, 3)  # Shape: (n_res, 3 atoms, 3 coords)
+            
+            # Convert to chain features format - now using the reshaped coordinates
             chain_feats = {
-                'aatype': torch.zeros(frame_coords.shape[0] // 3).long(),  # Placeholder
-                'atom37_pos': torch.from_numpy(frame_coords).float(),
-                'res_mask': torch.ones(frame_coords.shape[0] // 3).float(),
+                'aatype': torch.zeros(n_residues).long(),  # Placeholder
+                'atom37_pos': torch.from_numpy(frame_coords.reshape(-1, 3)).float(),  # Flatten back to (n_res * 3, 3)
+                'res_mask': torch.ones(n_residues).float(),
             }
             return chain_feats
         else:
@@ -573,8 +577,10 @@ class MDEnhancedPdbDataset(PdbDataset):
 
         # For MD data, we need to create the rigid groups
         if processed_file_path == 'md_trajectory':
-            # Create rigid groups from atom positions
-            bb_pos = chain_feats['atom37_pos'].reshape(-1, 3, 3)  # Reshape to (N_res, 3 atoms, 3 coords)
+            # Get number of residues from the atom positions
+            n_residues = len(chain_feats['res_mask'])
+            # Reshape atom positions to (n_res, 3 atoms, 3 coords)
+            bb_pos = chain_feats['atom37_pos'].reshape(n_residues, 3, 3)
             gt_bb_rigid = rigid_utils.Rigid.from_3_points(
                 bb_pos[:, 0],  # N
                 bb_pos[:, 1],  # CA
