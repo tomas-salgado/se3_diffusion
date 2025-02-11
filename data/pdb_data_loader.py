@@ -556,16 +556,22 @@ class MDEnhancedPdbDataset(PdbDataset):
             # Convert to chain features format
             chain_feats = {
                 'aatype': torch.zeros(n_residues).long(),  # Placeholder
-                'atom37_pos': torch.zeros(37 * n_residues, 3).float(),  # Initialize full atom37 array
+                'atom37_pos': torch.zeros(n_residues, 37, 3).float(),  # Initialize full atom37 array
+                'atom37_mask': torch.zeros(n_residues, 37).float(),  # Initialize atom37 mask
                 'res_mask': torch.ones(n_residues).float(),
             }
             
             # Fill in the backbone atoms (N, CA, C) in their correct positions in atom37
             for i in range(n_residues):
                 # In atom37 format, N is index 0, CA is index 1, C is index 2
-                chain_feats['atom37_pos'][i * 37 + 0] = torch.from_numpy(frame_coords[i * 3 + 0])  # N
-                chain_feats['atom37_pos'][i * 37 + 1] = torch.from_numpy(frame_coords[i * 3 + 1])  # CA
-                chain_feats['atom37_pos'][i * 37 + 2] = torch.from_numpy(frame_coords[i * 3 + 2])  # C
+                chain_feats['atom37_pos'][i, 0] = torch.from_numpy(frame_coords[i * 3 + 0])  # N
+                chain_feats['atom37_pos'][i, 1] = torch.from_numpy(frame_coords[i * 3 + 1])  # CA
+                chain_feats['atom37_pos'][i, 2] = torch.from_numpy(frame_coords[i * 3 + 2])  # C
+                
+                # Set mask for backbone atoms
+                chain_feats['atom37_mask'][i, 0] = 1.0  # N
+                chain_feats['atom37_mask'][i, 1] = 1.0  # CA
+                chain_feats['atom37_mask'][i, 2] = 1.0  # C
             
             return chain_feats
         else:
@@ -592,9 +598,9 @@ class MDEnhancedPdbDataset(PdbDataset):
             # Extract N, CA, C positions for each residue
             bb_pos = torch.zeros(n_residues, 3, 3)
             for i in range(n_residues):
-                bb_pos[i, 0] = chain_feats['atom37_pos'][i * 37 + 0]  # N
-                bb_pos[i, 1] = chain_feats['atom37_pos'][i * 37 + 1]  # CA
-                bb_pos[i, 2] = chain_feats['atom37_pos'][i * 37 + 2]  # C
+                bb_pos[i, 0] = chain_feats['atom37_pos'][i, 0]  # N
+                bb_pos[i, 1] = chain_feats['atom37_pos'][i, 1]  # CA
+                bb_pos[i, 2] = chain_feats['atom37_pos'][i, 2]  # C
             
             gt_bb_rigid = rigid_utils.Rigid.from_3_points(
                 bb_pos[:, 0],  # N
