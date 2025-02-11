@@ -72,8 +72,8 @@ def run_finetuning():
     os.system(
         "micromamba run -n se3 python experiments/finetune_ar.py "
         "experiment.use_wandb=False "
-        "experiment.ckpt_freq=1000 "  # Save checkpoint every 1000 steps
-        "experiment.eval_freq=2000"    # Evaluate every 2000 steps
+        "experiment.ckpt_epochs=1 "  # Save checkpoint every epoch
+        "experiment.eval_epochs=2"    # Evaluate every 2 epochs
     )
     
     # Final sync of outputs to volume
