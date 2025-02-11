@@ -526,14 +526,17 @@ class MDEnhancedPdbDataset(PdbDataset):
     def _init_metadata(self):
         """Override to handle MD data without requiring PDB data"""
         if self.md_trajectory is not None:
+            # Calculate the actual number of residues
+            n_residues = self.md_trajectory.shape[1] // 3
+            
             # Create metadata DataFrame for MD frames only
             md_metadata = pd.DataFrame({
                 'pdb_name': [f'MD_frame_{i}' for i in range(len(self.md_trajectory))],
-                'modeled_seq_len': self.md_trajectory.shape[1] // 3,  # Divide by 3 for N, CA, C atoms
+                'modeled_seq_len': n_residues,  # This is the actual number of residues
                 'processed_path': 'md_trajectory',  # Special flag to use MD data
             })
             self.csv = md_metadata
-            self._log.info(f"Created metadata for {len(self.csv)} MD frames")
+            self._log.info(f"Created metadata for {len(self.csv)} MD frames with {n_residues} residues each")
         else:
             # If no MD data and no PDB data, create empty DataFrame
             self.csv = pd.DataFrame(columns=['pdb_name', 'modeled_seq_len', 'processed_path'])
@@ -631,7 +634,14 @@ class MDEnhancedPdbDataset(PdbDataset):
         # Convert all features to tensors
         final_feats = tree.map_structure(
             lambda x: x if torch.is_tensor(x) else torch.tensor(x), chain_feats)
-        final_feats = du.pad_feats(final_feats, csv_row['modeled_seq_len'])
+        
+        # Make sure we're using the correct sequence length for padding
+        if processed_file_path == 'md_trajectory':
+            max_len = len(chain_feats['res_mask'])  # Use actual number of residues
+        else:
+            max_len = csv_row['modeled_seq_len']
+            
+        final_feats = du.pad_feats(final_feats, max_len)
         
         if self.is_training:
             return final_feats
