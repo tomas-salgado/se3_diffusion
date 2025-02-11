@@ -21,11 +21,12 @@ data:
   md_trajectory_path: Tau5R2R3_backbone.npz  # Update this path to your AR npz file
   split_train_val: 0.9  # Use 90% for training, 10% for validation
   max_squared_res: 64000  # Will be automatically determined from AR structure size
+  csv_path: null  # Disable PDB dataset loading
   
-  # Filtering settings - these are less relevant for AR finetuning but kept for compatibility
+  # Disable all PDB filtering settings since we're only using MD data
   filtering:
-    allowed_oligomer: null  # Not used for AR data
-    max_len: null  # Will be determined from AR structure
+    allowed_oligomer: null
+    max_len: null
     min_len: null
     max_helix_percent: null
     max_loop_percent: null
