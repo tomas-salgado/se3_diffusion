@@ -503,7 +503,7 @@ class Sampler:
         )
         return tree.map_structure(lambda x: x[:, 0], sample_out)
 
-@hydra.main(version_base=None, config_path="../config", config_name="inference")
+@hydra.main(version_base=None, config_path="../config", config_name="finetuned_inference")
 def run(conf: DictConfig) -> None:
 
     # Read model checkpoint.
