@@ -560,6 +560,7 @@ class MDEnhancedPdbDataset(PdbDataset):
                 'atom37_mask': torch.zeros(n_residues, 37).float(),  # Initialize atom37 mask
                 'res_mask': torch.ones(n_residues).float(),
                 'seq_idx': torch.arange(n_residues).long() + 1,  # 1-based residue indices
+                'torsion_angles_sin_cos': torch.zeros(n_residues, 7, 2).float(),  # 7 torsion angles, each as (sin, cos)
             }
             
             # Fill in the backbone atoms (N, CA, C) in their correct positions in atom37
@@ -573,6 +574,26 @@ class MDEnhancedPdbDataset(PdbDataset):
                 chain_feats['atom37_mask'][i, 0] = 1.0  # N
                 chain_feats['atom37_mask'][i, 1] = 1.0  # CA
                 chain_feats['atom37_mask'][i, 2] = 1.0  # C
+                
+                # Calculate torsion angles if not at the ends of the chain
+                if i > 0 and i < n_residues - 1:
+                    # Get coordinates for torsion angle calculation
+                    prev_c = frame_coords[(i-1) * 3 + 2]  # Previous residue's C
+                    curr_n = frame_coords[i * 3 + 0]      # Current residue's N
+                    curr_ca = frame_coords[i * 3 + 1]     # Current residue's CA
+                    curr_c = frame_coords[i * 3 + 2]      # Current residue's C
+                    next_n = frame_coords[(i+1) * 3 + 0]  # Next residue's N
+                    
+                    # Calculate phi angle (C-N-CA-C)
+                    phi = calc_dihedral(prev_c, curr_n, curr_ca, curr_c)
+                    # Calculate psi angle (N-CA-C-N)
+                    psi = calc_dihedral(curr_n, curr_ca, curr_c, next_n)
+                    
+                    # Store as sin/cos
+                    chain_feats['torsion_angles_sin_cos'][i, 0, 0] = torch.sin(torch.tensor(phi))
+                    chain_feats['torsion_angles_sin_cos'][i, 0, 1] = torch.cos(torch.tensor(phi))
+                    chain_feats['torsion_angles_sin_cos'][i, 2, 0] = torch.sin(torch.tensor(psi))
+                    chain_feats['torsion_angles_sin_cos'][i, 2, 1] = torch.cos(torch.tensor(psi))
             
             return chain_feats
         else:
@@ -654,3 +675,19 @@ class MDEnhancedPdbDataset(PdbDataset):
             return final_feats
         else:
             return final_feats, csv_row['pdb_name']
+
+def calc_dihedral(p1, p2, p3, p4):
+    """Calculate dihedral angle between 4 points."""
+    b1 = p2 - p1
+    b2 = p3 - p2
+    b3 = p4 - p3
+    
+    n1 = np.cross(b1, b2)
+    n2 = np.cross(b2, b3)
+    
+    m1 = np.cross(n1, b2/np.linalg.norm(b2))
+    
+    x = np.dot(n1, n2)
+    y = np.dot(m1, n2)
+    
+    return np.arctan2(y, x)
