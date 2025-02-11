@@ -38,11 +38,21 @@ def run_finetuning():
     os.system("git clone https://github.com/tomas-salgado/se3_diffusion")
     os.chdir("se3_diffusion")
     
-    # Download MD data from Google Drive
+    # Create weights directory if it doesn't exist
+    os.makedirs("weights", exist_ok=True)
+    
+    # Download MD data and weights from Google Drive
     import gdown
-    url = "https://drive.google.com/file/d/1AwNll554qxREWW__Z40sYJf3n2sq2LlI/view"
-    output = "Tau5R2R3_backbone.npz"
-    gdown.download(url=url, output=output, fuzzy=True)
+    
+    # Download MD data
+    md_url = "https://drive.google.com/file/d/1AwNll554qxREWW__Z40sYJf3n2sq2LlI/view"
+    md_output = "Tau5R2R3_backbone.npz"
+    gdown.download(url=md_url, output=md_output, fuzzy=True)
+    
+    # Download weights file
+    weights_url = "https://drive.google.com/file/d/1fUel-CmAz9G_999vcD9g93EXTysvLfKY/view"
+    weights_output = "weights/ar_finetuning.pth"
+    gdown.download(url=weights_url, output=weights_output, fuzzy=True)
     
     # Create directories for outputs
     os.makedirs("ckpt", exist_ok=True)
@@ -53,7 +63,7 @@ def run_finetuning():
         while True:
             time.sleep(300)  # Sync every 5 minutes
             print("\nSyncing outputs to persistent volume...")
-            paths_to_save = ["ckpt/", "eval_outputs/", "outputs/"]
+            paths_to_save = ["ckpt/", "eval_outputs/", "outputs/", "weights/"]  # Added weights/ to sync
             for path in paths_to_save:
                 if os.path.exists(path):
                     dst = os.path.join("/outputs", path)
@@ -78,7 +88,7 @@ def run_finetuning():
     
     # Final sync of outputs to volume
     print("\nPerforming final sync to persistent volume...")
-    paths_to_save = ["ckpt/", "eval_outputs/", "outputs/"]
+    paths_to_save = ["ckpt/", "eval_outputs/", "outputs/", "weights/"]  # Added weights/ to sync
     for path in paths_to_save:
         if os.path.exists(path):
             dst = os.path.join("/outputs", path)
