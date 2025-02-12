@@ -33,6 +33,9 @@ def run_inference():
     
     # Clone repository again for function execution
     os.system("git clone https://github.com/tomas-salgado/se3_diffusion")
+
+    # Remove cached repo
+    os.system("rm -rf se3_diffusion")
     
     # Run inference script
     os.chdir("se3_diffusion")
