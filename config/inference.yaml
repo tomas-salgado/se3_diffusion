@@ -27,7 +27,7 @@ inference:
     # Number of backbone samples per sequence length.
     samples_per_length: 10
     # Number of ESMFdold samples per backbone sample.
-    seq_per_sample: 0
+    seq_per_sample: 8
     # Minimum sequence length to sample.
     min_length: 226
     # Maximum sequence length to sample.
