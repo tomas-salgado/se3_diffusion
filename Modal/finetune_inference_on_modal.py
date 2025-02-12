@@ -37,6 +37,11 @@ def run_inference():
     # Run inference script
     os.chdir("se3_diffusion")
 
+    os.makedirs("weights", exist_ok=True)
+    weights_url = "https://drive.google.com/file/d/1fUel-CmAz9G_999vcD9g93EXTysvLfKY/view"
+    weights_output = "weights/ar_finetuning.pth"
+    gdown.download(url=weights_url, output=weights_output, fuzzy=True)
+
     os.system("micromamba run -n se3 python experiments/inference_se3_diffusion.py")
     
     # Move results to mounted volume and commit
