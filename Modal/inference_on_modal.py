@@ -31,11 +31,13 @@ def run_inference():
     from pathlib import Path
     import gdown
     
+    # Remove cached repo if it exists
+    repo_path = Path("se3_diffusion")
+    if repo_path.exists():
+        shutil.rmtree(repo_path)
+
     # Clone repository again for function execution
     os.system("git clone https://github.com/tomas-salgado/se3_diffusion")
-
-    # Remove cached repo
-    os.system("rm -rf se3_diffusion")
     
     # Run inference script
     os.chdir("se3_diffusion")
