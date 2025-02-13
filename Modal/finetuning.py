@@ -23,7 +23,8 @@ image = (
     image=image,
     gpu="T4",
     timeout=3600,
-    volumes={"/outputs": volume}
+    volumes={"/outputs": volume},
+    secrets=[modal.Secret.from_name("wandb-secret")]
 )
 def run_finetuning():
     import os
@@ -71,7 +72,7 @@ def run_finetuning():
     # Run fine-tuning with more frequent checkpoints
     os.system(
         "micromamba run -n se3 python experiments/finetune_ar.py "
-        "experiment.use_wandb=False "
+        "experiment.use_wandb=True "
         "experiment.ckpt_epochs=1 "  # Save checkpoint every epoch
         "experiment.eval_epochs=2"    # Evaluate every 2 epochs
     )
