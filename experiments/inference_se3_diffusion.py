@@ -220,18 +220,20 @@ class Sampler:
                     output_dir=sample_dir
                 )
 
-                # Run ProteinMPNN
-                pdb_path = traj_paths['sample_path']
-                sc_output_dir = os.path.join(sample_dir, 'self_consistency')
-                os.makedirs(sc_output_dir, exist_ok=True)
-                shutil.copy(pdb_path, os.path.join(
-                    sc_output_dir, os.path.basename(pdb_path)))
-                _ = self.run_self_consistency(
-                    sc_output_dir,
-                    pdb_path,
-                    motif_mask=None
-                )
-                self._log.info(f'Done sample {sample_i}: {pdb_path}')
+                # For finetuning we only care about FrameDiff, not ProteinMPNN and ESMFold
+                # # Run ProteinMPNN
+                # pdb_path = traj_paths['sample_path']
+                # sc_output_dir = os.path.join(sample_dir, 'self_consistency')
+                # os.makedirs(sc_output_dir, exist_ok=True)
+                # shutil.copy(pdb_path, os.path.join(
+                #     sc_output_dir, os.path.basename(pdb_path)))
+                # _ = self.run_self_consistency(
+                #     sc_output_dir,
+                #     pdb_path,
+                #     motif_mask=None
+                # )
+                # self._log.info(f'Done sample {sample_i}: {pdb_path}')
+                self._log.info(f'Done sample {sample_i}: {traj_paths["sample_path"]}')
 
     def save_traj(
             self,
