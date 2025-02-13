@@ -500,7 +500,7 @@ class DistributedTrainSampler(data.Sampler):
         """
         self.epoch = epoch
 
-
+#TODO: this can be heavily simplified because we only need to load the MD data for finetuning, not the PDB data
 class MDEnhancedPdbDataset(PdbDataset):
     def __init__(self, data_conf, diffuser, is_training, md_trajectory_path=None):
         # Initialize basic attributes without calling parent's __init__
