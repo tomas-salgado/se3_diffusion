@@ -21,7 +21,7 @@ image = (
 
 @app.function(
     image=image,
-    gpu="T4",
+    gpu="A100",
     timeout=3600,
     volumes={"/outputs": volume},
     secrets=[modal.Secret.from_name("wandb-secret")]

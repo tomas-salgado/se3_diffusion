@@ -6,7 +6,7 @@ experiment:
   name: ar_finetune
   batch_size: 16  # Smaller batch size for more stable finetuning
   sample_mode: time_batch
-  learning_rate: 0.000005  # Even lower learning rate (5e-6) for more stable finetuning
+  learning_rate: 0.00002  # Increased from 5e-6 to 2e-5 for better learning progress
   warm_start: ./weights  # Pre-trained weights
   use_warm_start_conf: True
   num_gpus: 1
