@@ -38,7 +38,7 @@ def run_inference():
     os.chdir("se3_diffusion")
 
     os.makedirs("weights", exist_ok=True)
-    weights_url = "https://drive.google.com/file/d/1fUel-CmAz9G_999vcD9g93EXTysvLfKY/view"
+    weights_url = "https://drive.google.com/file/d/1tU36nmNjyzs0wSJSf0LrORXkoJUGpwjx/view?usp=drive_link"
     weights_output = "weights/ar_finetuning.pth"
     gdown.download(url=weights_url, output=weights_output, fuzzy=True)
 
