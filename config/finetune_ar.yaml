@@ -20,7 +20,8 @@ experiment:
   early_stop_patience: 10  # Stop if no improvement for 10 evaluations
   
 data:
-  md_trajectory_path: Tau5R2R3_backbone.npz  # Your AR npz file
+  xtc_path: Tau5R2R3_apo.xtc  
+  top_path: Tau5R2R3_apo.pdb  
   split_train_val: 0.9
   max_squared_res: 64000
   csv_path: null

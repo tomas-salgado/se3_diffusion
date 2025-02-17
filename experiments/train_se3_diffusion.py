@@ -46,7 +46,6 @@ from data import utils as du
 from data import all_atom
 from model import score_network
 from experiments import utils as eu
-from data.pdb_data_loader import MDEnhancedPdbDataset
 
 
 class Experiment:
@@ -98,13 +97,6 @@ class Experiment:
         if conf.experiment.warm_start:
             ckpt_dir = conf.experiment.warm_start
             self._log.info(f'Warm starting from: {ckpt_dir}')
-            print("\nCurrent working directory:", os.getcwd())
-            print("\nContents of weights directory:")
-            if os.path.exists('./weights'):
-                files = os.listdir('./weights')
-                print("Files found:", files)
-            else:
-                print("weights directory does not exist")
             ckpt_files = [
                 x for x in os.listdir(ckpt_dir)
                 if 'pkl' in x or '.pth' in x
@@ -658,7 +650,7 @@ class Experiment:
         dist_mat_loss = torch.sum(
             (gt_pair_dists - pred_pair_dists)**2 * pair_dist_mask,
             dim=(1, 2))
-        dist_mat_loss /= torch.sum(pair_dist_mask, dim=(1, 2)) - num_res
+        dist_mat_loss /= (torch.sum(pair_dist_mask, dim=(1, 2)) - num_res)
         dist_mat_loss *= self._exp_conf.dist_mat_loss_weight
         dist_mat_loss *= batch['t'] < self._exp_conf.dist_mat_loss_t_filter
         dist_mat_loss *= self._exp_conf.aux_loss_weight
@@ -826,40 +818,13 @@ class Experiment:
         return ret
 
 
-class MDFineTuningExperiment(Experiment):
-    """Extends base Experiment class for MD fine-tuning."""
-    
-    def create_dataset(self):
-        """Override dataset creation to use MD trajectory."""
-        train_dataset = MDEnhancedPdbDataset(
-            data_conf=self._data_conf,
-            diffuser=self._diffuser,
-            is_training=True,
-            md_trajectory_path=self._data_conf.md_trajectory_path
-        )
-        
-        # Use a portion of MD data for validation
-        valid_dataset = MDEnhancedPdbDataset(
-            data_conf=self._data_conf,
-            diffuser=self._diffuser,
-            is_training=False,
-            md_trajectory_path=self._data_conf.md_trajectory_path
-        )
-
-        train_sampler = pdb_data_loader.TrainSampler(
-            data_conf=self._data_conf,
-            dataset=train_dataset,
-            batch_size=self._exp_conf.batch_size,
-            sample_mode='time_batch'
-        )
-
-        return self._create_loaders(train_dataset, valid_dataset, train_sampler)
-
-
-@hydra.main(version_base=None, config_path="../config", config_name="finetune_md")
+@hydra.main(version_base=None, config_path="../config", config_name="base")
 def run(conf: DictConfig) -> None:
+
+    # Fixes bug in https://github.com/wandb/wandb/issues/1525
     os.environ["WANDB_START_METHOD"] = "thread"
-    exp = MDFineTuningExperiment(conf=conf)
+
+    exp = Experiment(conf=conf)
     exp.start_training()
 
 

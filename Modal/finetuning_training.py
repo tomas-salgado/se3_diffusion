@@ -41,8 +41,12 @@ def run_finetuning():
     
     # Download MD data from Google Drive
     import gdown
-    url = "https://drive.google.com/file/d/1AwNll554qxREWW__Z40sYJf3n2sq2LlI/view"
-    output = "Tau5R2R3_backbone.npz"
+    url = "https://drive.google.com/file/d/1YLJqThMT-4vhI-ArEnmOvc-FaAE9zB1F/view?usp=drive_link"
+    output = "Tau5R2R3_apo.xtc"
+    gdown.download(url=url, output=output, fuzzy=True)
+
+    url = "https://drive.google.com/file/d/1Y_bkr-YHdgvF4S3Cuxh-Qa2-AVwdpH_W/view?usp=drive_link"
+    output = "Tau5R2R3_apo.pdb"
     gdown.download(url=url, output=output, fuzzy=True)
     
     # Create directories for outputs
