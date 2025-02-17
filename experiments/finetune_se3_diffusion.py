@@ -9,10 +9,9 @@ Without Wandb:
 import os
 import hydra
 from omegaconf import DictConfig
-from experiments.train_se3_diffusion import MDFineTuningExperiment
+from experiments.train_se3_diffusion import Experiment
 from data.pdb_data_loader import MDEnhancedPdbDataset
 from data import pdb_data_loader
-from experiments.train_se3_diffusion import Experiment
 
 class MDFineTuningExperiment(Experiment):
     """Extends base Experiment class for MD fine-tuning."""
