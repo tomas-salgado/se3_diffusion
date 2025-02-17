@@ -550,8 +550,12 @@ class MDEnhancedPdbDataset(PdbDataset):
                 self.aatype = []
                 for res_idx in self.complete_residues:
                     residue = self.topology.residue(res_idx)
-                    self.aatype.append(residue.resSeq)
-                self.aatype = np.array(self.aatype) - 1  # Convert to 0-based indexing
+                    # Convert 3-letter code to 1-letter code, then to index
+                    res_shortname = residue_constants.restype_3to1.get(residue.name, 'X')
+                    restype_idx = residue_constants.restype_order.get(
+                        res_shortname, residue_constants.restype_num)
+                    self.aatype.append(restype_idx)
+                self.aatype = np.array(self.aatype)  # No need to subtract 1 anymore
             except Exception as e:
                 self._log.warning(f"Could not extract sequence information: {str(e)}")
                 self.aatype = np.zeros(self.n_residues, dtype=np.int64)
