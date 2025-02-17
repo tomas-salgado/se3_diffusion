@@ -12,6 +12,7 @@ from omegaconf import DictConfig
 from experiments.train_se3_diffusion import Experiment
 from data.pdb_data_loader import MDEnhancedPdbDataset
 from data import pdb_data_loader
+from data import utils as du
 import torch
 
 class MDFineTuningExperiment(Experiment):
@@ -43,19 +44,28 @@ class MDFineTuningExperiment(Experiment):
             sample_mode='time_batch'
         )
 
-        train_loader = torch.utils.data.DataLoader(
+        # Use create_data_loader instead of DataLoader directly
+        train_loader = du.create_data_loader(
             train_dataset,
-            batch_sampler=train_sampler,
-            num_workers=self._exp_conf.num_loader_workers,
-            collate_fn=train_dataset.collate_fn,
-        )
-
-        valid_loader = torch.utils.data.DataLoader(
-            valid_dataset,
+            sampler=train_sampler,
+            np_collate=False,
+            length_batch=True,
             batch_size=self._exp_conf.batch_size,
             shuffle=False,
             num_workers=self._exp_conf.num_loader_workers,
-            collate_fn=valid_dataset.collate_fn,
+            drop_last=False,
+            max_squared_res=self._exp_conf.max_squared_res,
+        )
+
+        valid_loader = du.create_data_loader(
+            valid_dataset,
+            sampler=None,
+            np_collate=False,
+            length_batch=False,
+            batch_size=self._exp_conf.batch_size,
+            shuffle=False,
+            num_workers=self._exp_conf.num_loader_workers,
+            drop_last=False,
         )
 
         return train_dataset, valid_dataset, train_loader, valid_loader, train_sampler

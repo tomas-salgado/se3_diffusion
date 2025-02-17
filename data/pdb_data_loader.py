@@ -543,7 +543,7 @@ class MDEnhancedPdbDataset(PdbDataset):
             
             # Store paths for lazy loading
             self.xtc_path = xtc_path
-            self.trajectory = None  # Will load on first access
+            self.trajectory = None
             
             # Get sequence information
             try:
