@@ -1,6 +1,7 @@
 """PDB dataset loader."""
 import math
 from typing import Optional
+from collections import defaultdict
 
 import torch
 import torch.distributed as dist
@@ -500,196 +501,167 @@ class DistributedTrainSampler(data.Sampler):
         """
         self.epoch = epoch
 
-#TODO: this can be heavily simplified because we only need to load the MD data for finetuning, not the PDB data
 class MDEnhancedPdbDataset(PdbDataset):
-    def __init__(self, data_conf, diffuser, is_training, md_trajectory_path=None):
-        # Initialize basic attributes without calling parent's __init__
+    """Dataset for fine-tuning using MD trajectory data.
+    
+    This dataset loads frames directly from MD trajectories in XTC format
+    and converts them into the format expected by the diffusion model.
+    """
+    
+    def __init__(self, data_conf, diffuser, is_training, xtc_path=None, top_path=None):
+        # Basic initialization
         self._log = logging.getLogger(__name__)
         self._is_training = is_training
         self._data_conf = data_conf
         self._diffuser = diffuser
-        self.md_trajectory = None
         
-        if md_trajectory_path:
-            # Load MD trajectory data
+        # Load MD trajectory
+        if xtc_path and top_path:
+            import mdtraj as md
+            self._log.info(f"Loading trajectory topology from {top_path}")
+            self.topology = md.load(top_path).topology
+            
+            # Pre-select backbone atoms
+            self.backbone_indices = []
+            residues = defaultdict(dict)
+            for atom in self.topology.atoms:
+                if atom.name in ['N', 'CA', 'C']:
+                    residues[atom.residue.index][atom.name] = atom.index
+            
+            # Only use residues that have all three atoms
+            self.complete_residues = []
+            for res_idx, atoms in residues.items():
+                if all(name in atoms for name in ['N', 'CA', 'C']):
+                    self.complete_residues.append(res_idx)
+                    self.backbone_indices.extend([atoms['N'], atoms['CA'], atoms['C']])
+            
+            self.n_residues = len(self.complete_residues)
+            if self.n_residues == 0:
+                raise ValueError("No complete residues found with all backbone atoms!")
+                
+            self._log.info(f"Found {self.n_residues} residues with complete backbone atoms")
+            
+            # Store paths for lazy loading
+            self.xtc_path = xtc_path
+            self.trajectory = None  # Will load on first access
+            
+            # Get sequence information
             try:
-                md_data = np.load(md_trajectory_path)
-                self.md_trajectory = md_data['positions']
-                self._log.info(f"Loaded MD trajectory with shape {self.md_trajectory.shape}")
+                self.aatype = []
+                for res_idx in self.complete_residues:
+                    residue = self.topology.residue(res_idx)
+                    self.aatype.append(residue.resSeq)
+                self.aatype = np.array(self.aatype) - 1  # Convert to 0-based indexing
             except Exception as e:
-                self._log.error(f"Failed to load MD trajectory from {md_trajectory_path}: {str(e)}")
-                raise
+                self._log.warning(f"Could not extract sequence information: {str(e)}")
+                self.aatype = np.zeros(self.n_residues, dtype=np.int64)
+        else:
+            raise ValueError("XTC and topology paths are required for MD dataset")
         
-        # Initialize metadata
+        # Create metadata for the frames
         self._init_metadata()
 
     def _init_metadata(self):
-        """Override to handle MD data without requiring PDB data"""
-        if self.md_trajectory is not None:
-            # Calculate the actual number of residues
-            n_residues = self.md_trajectory.shape[1] // 3
-            
-            # Create metadata DataFrame for MD frames only
-            md_metadata = pd.DataFrame({
-                'pdb_name': [f'MD_frame_{i}' for i in range(len(self.md_trajectory))],
-                'modeled_seq_len': n_residues,  # This is the actual number of residues
-                'processed_path': 'md_trajectory',  # Special flag to use MD data
-            })
-            self.csv = md_metadata
-            self._log.info(f"Created metadata for {len(self.csv)} MD frames with {n_residues} residues each")
-        else:
-            # If no MD data and no PDB data, create empty DataFrame
-            self.csv = pd.DataFrame(columns=['pdb_name', 'modeled_seq_len', 'processed_path'])
-            self._log.warning("No MD trajectory provided, dataset will be empty")
+        """Create metadata with train/validation split."""
+        # Load trajectory only to get number of frames
+        import mdtraj as md
+        self._log.info(f"Counting frames in trajectory {self.xtc_path}")
+        
+        # Use chunk iteration to count frames without loading entire trajectory
+        n_frames = 0
+        for chunk in md.iterload(self.xtc_path, top=self.topology, chunk=1000):
+            n_frames += chunk.n_frames
+        
+        # Create DataFrame with all frames
+        self.csv = pd.DataFrame({
+            'pdb_name': [f'MD_frame_{i}' for i in range(n_frames)],
+            'modeled_seq_len': self.n_residues,
+            'frame_idx': range(n_frames)
+        })
+        
+        # Split for validation if not training
+        if not self.is_training:
+            n_eval = self._data_conf.num_eval_lengths * self._data_conf.samples_per_eval_length
+            step = len(self.csv) // n_eval
+            eval_indices = np.arange(0, len(self.csv), step)[:n_eval]
+            self.csv = self.csv.iloc[eval_indices]
+        
+        self._log.info(f"{'Training' if self.is_training else 'Validation'}: {len(self.csv)} frames with {self.n_residues} residues")
 
-    def _process_csv_row(self, processed_file_path):
-        """Override to handle both PDB and MD data"""
-        if processed_file_path == 'md_trajectory':
-            # Handle MD frame
-            frame_idx = int(self.csv.iloc[self._current_idx]['pdb_name'].split('_')[-1])
-            frame_coords = self.md_trajectory[frame_idx]  # Shape should be (226, 3)
-            
-            # The coordinates are already in the format we need (226 atoms, 3 coords)
-            # We just need to ensure it's properly organized as (N, CA, C) triplets
-            n_residues = frame_coords.shape[0] // 3
-            
-            # Convert to chain features format
-            chain_feats = {
-                'aatype': torch.zeros(n_residues).long(),  # Placeholder
-                'atom37_pos': torch.zeros(n_residues, 37, 3).float(),  # Initialize full atom37 array
-                'atom37_mask': torch.zeros(n_residues, 37).float(),  # Initialize atom37 mask
-                'res_mask': torch.ones(n_residues).float(),
-                'seq_idx': torch.arange(n_residues).long() + 1,  # 1-based residue indices
-                'torsion_angles_sin_cos': torch.zeros(n_residues, 7, 2).float(),  # 7 torsion angles, each as (sin, cos)
-                'rigids_t': torch.zeros(n_residues, 7).float(),  # Current rigid body transform
-                'sc_ca_t': torch.zeros(n_residues, 3).float(),  # Self-conditioning CA positions
-                'seq_mask': torch.ones(n_residues).float(),  # Sequence mask (same as res_mask for MD)
-            }
-            
-            # Fill in the backbone atoms (N, CA, C) in their correct positions in atom37
-            for i in range(n_residues):
-                # In atom37 format, N is index 0, CA is index 1, C is index 2
-                chain_feats['atom37_pos'][i, 0] = torch.from_numpy(frame_coords[i * 3 + 0])  # N
-                chain_feats['atom37_pos'][i, 1] = torch.from_numpy(frame_coords[i * 3 + 1])  # CA
-                chain_feats['atom37_pos'][i, 2] = torch.from_numpy(frame_coords[i * 3 + 2])  # C
-                
-                # Set mask for backbone atoms
-                chain_feats['atom37_mask'][i, 0] = 1.0  # N
-                chain_feats['atom37_mask'][i, 1] = 1.0  # CA
-                chain_feats['atom37_mask'][i, 2] = 1.0  # C
-                
-                # Store CA positions for self-conditioning
-                chain_feats['sc_ca_t'][i] = torch.from_numpy(frame_coords[i * 3 + 1])
-                
-                # Calculate torsion angles if not at the ends of the chain
-                if i > 0 and i < n_residues - 1:
-                    # Get coordinates for torsion angle calculation
-                    prev_c = frame_coords[(i-1) * 3 + 2]  # Previous residue's C
-                    curr_n = frame_coords[i * 3 + 0]      # Current residue's N
-                    curr_ca = frame_coords[i * 3 + 1]     # Current residue's CA
-                    curr_c = frame_coords[i * 3 + 2]      # Current residue's C
-                    next_n = frame_coords[(i+1) * 3 + 0]  # Next residue's N
-                    
-                    # Calculate phi angle (C-N-CA-C)
-                    phi = calc_dihedral(prev_c, curr_n, curr_ca, curr_c)
-                    # Calculate psi angle (N-CA-C-N)
-                    psi = calc_dihedral(curr_n, curr_ca, curr_c, next_n)
-                    
-                    # Store as sin/cos
-                    chain_feats['torsion_angles_sin_cos'][i, 0, 0] = torch.sin(torch.tensor(phi))
-                    chain_feats['torsion_angles_sin_cos'][i, 0, 1] = torch.cos(torch.tensor(phi))
-                    chain_feats['torsion_angles_sin_cos'][i, 2, 0] = torch.sin(torch.tensor(psi))
-                    chain_feats['torsion_angles_sin_cos'][i, 2, 1] = torch.cos(torch.tensor(psi))
-            
-            # Initialize rigid body transforms from backbone atoms
-            bb_pos = chain_feats['atom37_pos'][:, :3].clone()  # Get N, CA, C positions
-            gt_bb_rigid = rigid_utils.Rigid.from_3_points(
-                bb_pos[:, 0],  # N
-                bb_pos[:, 1],  # CA
-                bb_pos[:, 2],  # C
-            )
-            chain_feats['rigids_t'] = gt_bb_rigid.to_tensor_7()
-            
-            return chain_feats
-        else:
-            return super()._process_csv_row(processed_file_path)
+    def _lazy_load_trajectory(self):
+        """Lazy load the trajectory only when first accessed."""
+        if self.trajectory is None:
+            import mdtraj as md
+            self._log.info(f"Loading trajectory from {self.xtc_path}")
+            self.trajectory = md.load(self.xtc_path, top=self.topology, atom_indices=self.backbone_indices)
+        return self.trajectory
 
     def __getitem__(self, idx):
-        # Store the current index for use in _process_csv_row
-        self._current_idx = idx
+        """Get a single MD frame and prepare it for training."""
+        frame_idx = self.csv.iloc[idx]['frame_idx']
         
-        # Sample data example
-        csv_row = self.csv.iloc[idx]
-        processed_file_path = csv_row['processed_path']
-        chain_feats = self._process_csv_row(processed_file_path)
-
-        # Use a fixed seed for evaluation
-        if self.is_training:
-            rng = np.random.default_rng(None)
-        else:
-            rng = np.random.default_rng(idx)
-
-        # For MD data, we need to create the rigid groups
-        if processed_file_path == 'md_trajectory':
-            n_residues = len(chain_feats['res_mask'])
-            # Extract N, CA, C positions for each residue
-            bb_pos = torch.zeros(n_residues, 3, 3)
-            for i in range(n_residues):
-                bb_pos[i, 0] = chain_feats['atom37_pos'][i, 0]  # N
-                bb_pos[i, 1] = chain_feats['atom37_pos'][i, 1]  # CA
-                bb_pos[i, 2] = chain_feats['atom37_pos'][i, 2]  # C
+        # Load specific frame using slice
+        traj = self._lazy_load_trajectory()
+        frame_coords = traj.xyz[frame_idx] * 10  # Convert nm to angstroms
+        
+        # Initialize features needed by the model
+        chain_feats = {
+            'aatype': torch.tensor(self.aatype).long(),
+            'seq_idx': torch.arange(1, self.n_residues + 1),  # 1-based indexing
+            'chain_idx': torch.ones(self.n_residues),  # Single chain
+            'res_mask': torch.ones(self.n_residues),
+            'atom37_pos': torch.zeros(self.n_residues, 37, 3),
+            'atom37_mask': torch.zeros(self.n_residues, 37),
+            'torsion_angles_sin_cos': torch.zeros(self.n_residues, 7, 2),  # Placeholder
+        }
+        
+        # Fill in backbone atoms (N, CA, C)
+        for i in range(self.n_residues):
+            # Add backbone atoms to their correct positions in atom37
+            chain_feats['atom37_pos'][i, 0] = torch.from_numpy(frame_coords[i * 3 + 0])  # N
+            chain_feats['atom37_pos'][i, 1] = torch.from_numpy(frame_coords[i * 3 + 1])  # CA
+            chain_feats['atom37_pos'][i, 2] = torch.from_numpy(frame_coords[i * 3 + 2])  # C
             
-            gt_bb_rigid = rigid_utils.Rigid.from_3_points(
-                bb_pos[:, 0],  # N
-                bb_pos[:, 1],  # CA
-                bb_pos[:, 2],  # C
-            )
-        else:
-            gt_bb_rigid = rigid_utils.Rigid.from_tensor_4x4(chain_feats['rigidgroups_0'])[:, 0]
+            # Set mask for backbone atoms
+            chain_feats['atom37_mask'][i, 0:3] = 1.0  # Mask for N, CA, C
 
-        diffused_mask = np.ones_like(chain_feats['res_mask'])
-        if np.sum(diffused_mask) < 1:
-            raise ValueError('Must be diffused')
-        fixed_mask = 1 - diffused_mask
-        chain_feats['fixed_mask'] = fixed_mask
+        # Calculate rigid body transforms from backbone atoms
+        gt_bb_rigid = rigid_utils.Rigid.from_3_points(
+            chain_feats['atom37_pos'][:, 0],  # N
+            chain_feats['atom37_pos'][:, 1],  # CA
+            chain_feats['atom37_pos'][:, 2],  # C
+        )
+        
+        # Add diffusion-specific features
         chain_feats['rigids_0'] = gt_bb_rigid.to_tensor_7()
-        chain_feats['sc_ca_t'] = torch.zeros_like(gt_bb_rigid.get_trans())
+        chain_feats['fixed_mask'] = torch.zeros(self.n_residues)
+        chain_feats['sc_ca_t'] = torch.zeros(self.n_residues, 3)  # For self-conditioning
 
-        # Sample t and diffuse
+        # Add noise according to diffusion schedule
         if self.is_training:
-            t = rng.uniform(self._data_conf.min_t, 1.0)
-            diff_feats_t = self._diffuser.forward_marginal(
+            t = np.random.uniform(self._data_conf.min_t, 1.0)
+            diff_feats = self._diffuser.forward_marginal(
                 rigids_0=gt_bb_rigid,
                 t=t,
                 diffuse_mask=None
             )
+            chain_feats.update(diff_feats)
+            chain_feats['t'] = t
         else:
             t = 1.0
-            diff_feats_t = self.diffuser.sample_ref(
+            diff_feats = self.diffuser.sample_ref(
                 n_samples=gt_bb_rigid.shape[0],
                 impute=gt_bb_rigid,
                 diffuse_mask=None,
                 as_tensor_7=True,
             )
-        chain_feats.update(diff_feats_t)
-        chain_feats['t'] = t
-
-        # Convert all features to tensors
-        final_feats = tree.map_structure(
-            lambda x: x if torch.is_tensor(x) else torch.tensor(x), chain_feats)
-        
-        # Make sure we're using the correct sequence length for padding
-        if processed_file_path == 'md_trajectory':
-            max_len = len(chain_feats['res_mask'])  # Use actual number of residues
-        else:
-            max_len = csv_row['modeled_seq_len']
-            
-        final_feats = du.pad_feats(final_feats, max_len)
+            chain_feats.update(diff_feats)
+            chain_feats['t'] = t
         
         if self.is_training:
-            return final_feats
+            return chain_feats
         else:
-            return final_feats, csv_row['pdb_name']
+            return chain_feats, self.csv.iloc[idx]['pdb_name']
 
 def calc_dihedral(p1, p2, p3, p4):
     """Calculate dihedral angle between 4 points."""
