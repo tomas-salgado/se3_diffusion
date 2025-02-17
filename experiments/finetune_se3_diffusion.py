@@ -68,7 +68,7 @@ class MDFineTuningExperiment(Experiment):
             drop_last=False,
         )
 
-        return train_dataset, valid_dataset, train_loader, valid_loader, train_sampler
+        return train_loader, valid_loader, train_sampler, None
 
 
 
