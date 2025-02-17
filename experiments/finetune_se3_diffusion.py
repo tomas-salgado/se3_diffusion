@@ -22,7 +22,8 @@ class MDFineTuningExperiment(Experiment):
             data_conf=self._data_conf,
             diffuser=self._diffuser,
             is_training=True,
-            md_trajectory_path=self._data_conf.md_trajectory_path
+            xtc_path=self._data_conf.xtc_path,
+            top_path=self._data_conf.top_path
         )
         
         # Use a portion of MD data for validation
@@ -30,7 +31,8 @@ class MDFineTuningExperiment(Experiment):
             data_conf=self._data_conf,
             diffuser=self._diffuser,
             is_training=False,
-            md_trajectory_path=self._data_conf.md_trajectory_path
+            xtc_path=self._data_conf.xtc_path,
+            top_path=self._data_conf.top_path
         )
 
         train_sampler = pdb_data_loader.TrainSampler(
