@@ -75,7 +75,7 @@ def run_finetuning():
     
     # Run fine-tuning with more frequent checkpoints
     os.system(
-        "micromamba run -n se3 python experiments/finetune_ar.py "
+        "micromamba run -n se3 python experiments/finetune_se3_diffusion.py "
         "experiment.use_wandb=True "
         "experiment.ckpt_epochs=1 "  # Save checkpoint every epoch
         "experiment.eval_epochs=2"    # Evaluate every 2 epochs
