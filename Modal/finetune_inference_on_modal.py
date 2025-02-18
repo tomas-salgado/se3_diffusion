@@ -42,7 +42,7 @@ def run_inference():
     weights_output = "weights/ar_finetuning.pth"
     gdown.download(url=weights_url, output=weights_output, fuzzy=True)
 
-    os.system("micromamba run -n se3 python experiments/inference_se3_diffusion.py")
+    os.system("micromamba run -n se3 python experiments/finetune_inference_se3_diffusion.py")
     
     # Move results to mounted volume and commit
     if os.path.exists("inference_outputs"):
