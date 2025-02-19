@@ -13,7 +13,7 @@ experiment:
   max_epochs: 500  
   eval_epochs: 10   
   ckpt_epochs: 10  
-  num_loader_workers: 10
+  num_loader_workers: 6
   use_wandb: True
   wandb_project: "se3-diffusion-ar"
   early_ckpt: True  # Enable early checkpoint evaluation
