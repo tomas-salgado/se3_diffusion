@@ -4,16 +4,16 @@ defaults:
 
 experiment:
   name: ar_finetune
-  batch_size: 16  
+  batch_size: 256
   sample_mode: time_batch
-  learning_rate: 0.00005  
+  learning_rate: 0.0001  
   warm_start: ./weights  # Pre-trained weights
   use_warm_start_conf: True
-  num_gpus: 1
-  max_epochs: 50  
-  eval_epochs: 5   
-  ckpt_epochs: 5  
-  num_loader_workers: 4
+  num_gpus: 2
+  max_epochs: 500  
+  eval_epochs: 10   
+  ckpt_epochs: 10  
+  num_loader_workers: 10
   use_wandb: True
   wandb_project: "se3-diffusion-ar"
   early_ckpt: True  # Enable early checkpoint evaluation
@@ -44,9 +44,3 @@ data:
     min_beta_percent: null
     rog_quantile: null
     subset: null
-
-# Add noise schedule settings for finetuning
-diffuser:
-  noise_scale: 0.9  # Slightly reduced noise for finetuning
-  min_t: 0.01
-  max_t: 1.0 
