@@ -501,84 +501,87 @@ class DistributedTrainSampler(data.Sampler):
         """
         self.epoch = epoch
 
-class MDEnhancedPdbDataset(PdbDataset):
-    """Dataset for fine-tuning using MD trajectory data.
+class IDPEnsembleDataset(PdbDataset):
+    """Dataset for fine-tuning using IDP conformational ensembles.
     
-    This dataset loads frames directly from MD trajectories in XTC format
-    and converts them into the format expected by the diffusion model.
+    This dataset can load IDP conformational ensembles from either:
+    1. A multi-frame PDB file (e.g. from NMR or other experimental sources)
+    2. An XTC trajectory with its topology file (e.g. from MD simulations)
     """
     
-    def __init__(self, data_conf, diffuser, is_training, xtc_path=None, top_path=None):
+    def __init__(self, data_conf, diffuser, is_training, pdb_path=None, xtc_path=None, top_path=None):
         # Basic initialization
         self._log = logging.getLogger(__name__)
         self._is_training = is_training
         self._data_conf = data_conf
         self._diffuser = diffuser
         
-        # Load MD trajectory
-        if xtc_path and top_path:
-            import mdtraj as md
-            self._log.info(f"Loading trajectory topology from {top_path}")
-            self.topology = md.load(top_path).topology
-            
-            # Pre-select backbone atoms
-            self.backbone_indices = []
-            residues = defaultdict(dict)
-            for atom in self.topology.atoms:
-                if atom.name in ['N', 'CA', 'C']:
-                    residues[atom.residue.index][atom.name] = atom.index
-            
-            # Only use residues that have all three atoms
-            self.complete_residues = []
-            for res_idx, atoms in residues.items():
-                if all(name in atoms for name in ['N', 'CA', 'C']):
-                    self.complete_residues.append(res_idx)
-                    self.backbone_indices.extend([atoms['N'], atoms['CA'], atoms['C']])
-            
-            self.n_residues = len(self.complete_residues)
-            if self.n_residues == 0:
-                raise ValueError("No complete residues found with all backbone atoms!")
-                
-            self._log.info(f"Found {self.n_residues} residues with complete backbone atoms")
-            
-            # Store paths for lazy loading
-            self.xtc_path = xtc_path
-            self.trajectory = None
-            
-            # Get sequence information
-            try:
-                self.aatype = []
-                for res_idx in self.complete_residues:
-                    residue = self.topology.residue(res_idx)
-                    # Convert 3-letter code to 1-letter code, then to index
-                    res_shortname = residue_constants.restype_3to1.get(residue.name, 'X')
-                    restype_idx = residue_constants.restype_order.get(
-                        res_shortname, residue_constants.restype_num)
-                    self.aatype.append(restype_idx)
-                self.aatype = np.array(self.aatype)  # No need to subtract 1 anymore
-            except Exception as e:
-                self._log.warning(f"Could not extract sequence information: {str(e)}")
-                self.aatype = np.zeros(self.n_residues, dtype=np.int64)
+        # Validate input format
+        if pdb_path is not None and (xtc_path is not None or top_path is not None):
+            raise ValueError("Provide either pdb_path OR (xtc_path + top_path), not both")
+        if (xtc_path is not None and top_path is None) or (xtc_path is None and top_path is not None):
+            raise ValueError("Both xtc_path and top_path must be provided together")
+        if pdb_path is None and xtc_path is None:
+            raise ValueError("Must provide either pdb_path or (xtc_path + top_path)")
+        
+        # Load conformational ensemble based on provided format
+        import mdtraj as md
+        if pdb_path is not None:
+            self._log.info(f"Loading multi-frame PDB ensemble from {pdb_path}")
+            self.trajectory = md.load(pdb_path)
+            self.topology = self.trajectory.topology
         else:
-            raise ValueError("XTC and topology paths are required for MD dataset")
+            self._log.info(f"Loading topology from {top_path}")
+            self.topology = md.load(top_path).topology
+            self._log.info(f"Loading MD trajectory from {xtc_path}")
+            self.trajectory = md.load(xtc_path, top=self.topology)
+            
+        # Pre-select backbone atoms
+        self.backbone_indices = []
+        residues = defaultdict(dict)
+        for atom in self.topology.atoms:
+            if atom.name in ['N', 'CA', 'C']:
+                residues[atom.residue.index][atom.name] = atom.index
+        
+        # Only use residues that have all three atoms
+        self.complete_residues = []
+        for res_idx, atoms in residues.items():
+            if all(name in atoms for name in ['N', 'CA', 'C']):
+                self.complete_residues.append(res_idx)
+                self.backbone_indices.extend([atoms['N'], atoms['CA'], atoms['C']])
+        
+        self.n_residues = len(self.complete_residues)
+        if self.n_residues == 0:
+            raise ValueError("No complete residues found with all backbone atoms!")
+            
+        self._log.info(f"Found {self.n_residues} residues with complete backbone atoms")
+        
+        # Get sequence information
+        try:
+            self.aatype = []
+            for res_idx in self.complete_residues:
+                residue = self.topology.residue(res_idx)
+                # Convert 3-letter code to 1-letter code, then to index
+                res_shortname = residue_constants.restype_3to1.get(residue.name, 'X')
+                restype_idx = residue_constants.restype_order.get(
+                    res_shortname, residue_constants.restype_num)
+                self.aatype.append(restype_idx)
+            self.aatype = np.array(self.aatype)
+        except Exception as e:
+            self._log.warning(f"Could not extract sequence information: {str(e)}")
+            self.aatype = np.zeros(self.n_residues, dtype=np.int64)
         
         # Create metadata for the frames
         self._init_metadata()
 
     def _init_metadata(self):
         """Create metadata with train/validation split."""
-        # Load trajectory only to get number of frames
-        import mdtraj as md
-        self._log.info(f"Counting frames in trajectory {self.xtc_path}")
-        
-        # Use chunk iteration to count frames without loading entire trajectory
-        n_frames = 0
-        for chunk in md.iterload(self.xtc_path, top=self.topology, chunk=1000):
-            n_frames += chunk.n_frames
+        n_frames = self.trajectory.n_frames
+        self._log.info(f"Found {n_frames} conformers in ensemble")
         
         # Create DataFrame with all frames
         self.csv = pd.DataFrame({
-            'pdb_name': [f'MD_frame_{i}' for i in range(n_frames)],
+            'pdb_name': [f'conformer_{i}' for i in range(n_frames)],
             'modeled_seq_len': self.n_residues,
             'frame_idx': range(n_frames)
         })
@@ -590,23 +593,19 @@ class MDEnhancedPdbDataset(PdbDataset):
             eval_indices = np.arange(0, len(self.csv), step)[:n_eval]
             self.csv = self.csv.iloc[eval_indices]
         
-        self._log.info(f"{'Training' if self.is_training else 'Validation'}: {len(self.csv)} frames with {self.n_residues} residues")
-
-    def _lazy_load_trajectory(self):
-        """Lazy load the trajectory only when first accessed."""
-        if self.trajectory is None:
-            import mdtraj as md
-            self._log.info(f"Loading trajectory from {self.xtc_path}")
-            self.trajectory = md.load(self.xtc_path, top=self.topology, atom_indices=self.backbone_indices)
-        return self.trajectory
+        self._log.info(f"{'Training' if self.is_training else 'Validation'}: {len(self.csv)} conformers with {self.n_residues} residues")
 
     def __getitem__(self, idx):
-        """Get a single MD frame and prepare it for training."""
+        """Get a single frame and prepare it for training."""
         frame_idx = self.csv.iloc[idx]['frame_idx']
         
-        # Load specific frame using slice
-        traj = self._lazy_load_trajectory()
-        frame_coords = traj.xyz[frame_idx] * 10  # Convert nm to angstroms
+        # Get coordinates for this frame
+        frame_coords = self.trajectory.xyz[frame_idx][self.backbone_indices]
+        # Convert to angstroms if needed (XTC is in nm, PDB already in angstroms)
+        if not hasattr(self, '_is_pdb'):
+            self._is_pdb = self.trajectory.unitcell_lengths is None
+        if not self._is_pdb:
+            frame_coords = frame_coords * 10  # Convert nm to angstroms
         
         # Initialize features needed by the model
         chain_feats = {
@@ -639,7 +638,7 @@ class MDEnhancedPdbDataset(PdbDataset):
         # Add diffusion-specific features
         chain_feats['rigids_0'] = gt_bb_rigid.to_tensor_7()
         chain_feats['fixed_mask'] = torch.zeros(self.n_residues)
-        chain_feats['sc_ca_t'] = torch.zeros(self.n_residues, 3)  # For self-conditioning
+        chain_feats['sc_ca_t'] = torch.zeros(self.n_residues, 3)
 
         # Add noise according to diffusion schedule
         if self.is_training:

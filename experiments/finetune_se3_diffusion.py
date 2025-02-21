@@ -1,4 +1,4 @@
-"""Pytorch script for finetuning SE(3) protein diffusion on MD data.
+"""Pytorch script for finetuning SE(3) protein diffusion on IDP conformational ensembles.
 
 To run:
 > python experiments/finetune_se3_diffusion.py
@@ -10,31 +10,36 @@ import os
 import hydra
 from omegaconf import DictConfig
 from experiments.train_se3_diffusion import Experiment
-from data.pdb_data_loader import MDEnhancedPdbDataset
+from data.pdb_data_loader import IDPEnsembleDataset
 from data import pdb_data_loader
 from data import utils as du
 import torch
 
-class MDFineTuningExperiment(Experiment):
-    """Extends base Experiment class for MD fine-tuning."""
+class IDPEnsembleFineTuningExperiment(Experiment):
+    """Extends base Experiment class for fine-tuning on IDP conformational ensembles.
+    
+    Supports both experimental (multi-frame PDB) and computational (XTC+topology) ensemble formats.
+    """
     
     def create_dataset(self):
-        """Override dataset creation to use MD trajectory."""
-        train_dataset = MDEnhancedPdbDataset(
+        """Override dataset creation to use IDP ensemble data."""
+        train_dataset = IDPEnsembleDataset(
             data_conf=self._data_conf,
             diffuser=self._diffuser,
             is_training=True,
-            xtc_path=self._data_conf.xtc_path,
-            top_path=self._data_conf.top_path
+            pdb_path=self._data_conf.pdb_path if hasattr(self._data_conf, 'pdb_path') else None,
+            xtc_path=self._data_conf.xtc_path if hasattr(self._data_conf, 'xtc_path') else None,
+            top_path=self._data_conf.top_path if hasattr(self._data_conf, 'top_path') else None
         )
         
-        # Use a portion of MD data for validation
-        valid_dataset = MDEnhancedPdbDataset(
+        # Use a portion of conformers for validation
+        valid_dataset = IDPEnsembleDataset(
             data_conf=self._data_conf,
             diffuser=self._diffuser,
             is_training=False,
-            xtc_path=self._data_conf.xtc_path,
-            top_path=self._data_conf.top_path
+            pdb_path=self._data_conf.pdb_path if hasattr(self._data_conf, 'pdb_path') else None,
+            xtc_path=self._data_conf.xtc_path if hasattr(self._data_conf, 'xtc_path') else None,
+            top_path=self._data_conf.top_path if hasattr(self._data_conf, 'top_path') else None
         )
 
         train_sampler = pdb_data_loader.TrainSampler(
@@ -71,11 +76,10 @@ class MDFineTuningExperiment(Experiment):
         return train_loader, valid_loader, train_sampler, None
 
 
-
 @hydra.main(version_base=None, config_path="../config", config_name="finetune_ar")
 def run(conf: DictConfig) -> None:
     os.environ["WANDB_START_METHOD"] = "thread"
-    exp = MDFineTuningExperiment(conf=conf)
+    exp = IDPEnsembleFineTuningExperiment(conf=conf)
     exp.start_training()
 
 

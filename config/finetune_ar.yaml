@@ -24,8 +24,15 @@ experiment:
     eps: 1e-8  # Standard Adam epsilon
   
 data:
-  xtc_path: Tau5R2R3_apo.xtc  
-  top_path: Tau5R2R3_apo.pdb  
+  # IDP conformational ensemble input paths
+  # Provide either:
+  # 1. pdb_path for experimental ensembles (e.g. NMR)
+  # 2. xtc_path + top_path for MD simulation ensembles
+  pdb_path: PED00016e001.pdb # Path to multi-frame PDB ensemble
+  xtc_path: null  # Path to MD trajectory file
+  top_path: null  # Path to topology file for MD trajectory
+  
+  # Training parameters
   split_train_val: 0.9
   max_squared_res: 64000
   csv_path: null
@@ -34,7 +41,7 @@ data:
   samples_per_eval_length: 2
   num_eval_lengths: 3
   
-  # Disable PDB filtering settings
+  # Disable PDB filtering settings since we're using ensemble data
   filtering:
     allowed_oligomer: null
     max_len: null
