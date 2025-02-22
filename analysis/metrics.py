@@ -31,7 +31,8 @@ CA_VIOLATION_METRICS = [
 ]
 
 EVAL_METRICS = [
-    'tm_score', 
+    'tm_score',
+    'rmsd',  # Adding RMSD to evaluation metrics
 ]
 
 ALL_METRICS = (
@@ -103,6 +104,14 @@ def protein_metrics(
     seq = du.aatype_to_seq(gt_aatype[bb_diffuse_mask])
     _, tm_score = calc_tm_score(
         unpad_pred_scaffold_pos, unpad_gt_scaffold_pos, seq, seq)
+    
+    # Simple RMSD calculation between predicted and ground truth CA positions
+    rmsd = md.rmsd(
+        md.Trajectory([unpad_pred_scaffold_pos / 10.0], None),  # Convert to nm for mdtraj
+        md.Trajectory([unpad_gt_scaffold_pos / 10.0], None),
+        0,
+        precentered=False  # Will perform alignment before RMSD calc
+    )[0] * 10.0  # Convert back to Angstroms
 
     metrics_dict = {
         'ca_ca_bond_dev': ca_ca_bond_dev,
@@ -110,6 +119,7 @@ def protein_metrics(
         'ca_steric_clash_percent': ca_steric_clash_percent,
         'num_ca_steric_clashes': num_ca_steric_clashes,
         'tm_score': tm_score,
+        'rmsd': rmsd,  # Add RMSD to metrics
         **mdtraj_metrics,
     }
     for k in INTER_VIOLATION_METRICS: 
