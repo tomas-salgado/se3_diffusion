@@ -13,6 +13,7 @@ import pandas as pd
 import logging
 import random
 import functools as fn
+import mdtraj as md
 
 from torch.utils import data
 from data import utils as du
@@ -524,52 +525,31 @@ class IDPEnsembleDataset(PdbDataset):
         if pdb_path is None and xtc_path is None:
             raise ValueError("Must provide either pdb_path or (xtc_path + top_path)")
         
-        # Load conformational ensemble based on provided format
-        import mdtraj as md
+        # Load trajectory
         if pdb_path is not None:
             self._log.info(f"Loading multi-frame PDB ensemble from {pdb_path}")
             self.trajectory = md.load(pdb_path)
-            self.topology = self.trajectory.topology
         else:
             self._log.info(f"Loading topology from {top_path}")
             self.topology = md.load(top_path).topology
             self._log.info(f"Loading MD trajectory from {xtc_path}")
             self.trajectory = md.load(xtc_path, top=self.topology)
-            
-        # Pre-select backbone atoms
-        self.backbone_indices = []
-        residues = defaultdict(dict)
-        for atom in self.topology.atoms:
-            if atom.name in ['N', 'CA', 'C']:
-                residues[atom.residue.index][atom.name] = atom.index
+
+        # Select backbone atoms exactly as in rmsd evaluation
+        self.backbone_traj = self.trajectory.atom_slice(self.trajectory.topology.select('backbone'))
+        if self.backbone_traj.n_atoms == 0:
+            raise ValueError("No backbone atoms found!")
         
-        # Only use residues that have all three atoms
-        self.complete_residues = []
-        for res_idx, atoms in residues.items():
-            if all(name in atoms for name in ['N', 'CA', 'C']):
-                self.complete_residues.append(res_idx)
-                self.backbone_indices.extend([atoms['N'], atoms['CA'], atoms['C']])
+        # Get residue information
+        self.n_residues = len(set(atom.residue.index for atom in self.trajectory.topology.atoms 
+                                if atom.name in ['N', 'CA', 'C', 'O']))
         
-        self.n_residues = len(self.complete_residues)
-        if self.n_residues == 0:
-            raise ValueError("No complete residues found with all backbone atoms!")
-            
-        self._log.info(f"Found {self.n_residues} residues with complete backbone atoms")
-        
-        # Get sequence information
-        try:
-            self.aatype = []
-            for res_idx in self.complete_residues:
-                residue = self.topology.residue(res_idx)
-                # Convert 3-letter code to 1-letter code, then to index
-                res_shortname = residue_constants.restype_3to1.get(residue.name, 'X')
-                restype_idx = residue_constants.restype_order.get(
-                    res_shortname, residue_constants.restype_num)
-                self.aatype.append(restype_idx)
-            self.aatype = np.array(self.aatype)
-        except Exception as e:
-            self._log.warning(f"Could not extract sequence information: {str(e)}")
-            self.aatype = np.zeros(self.n_residues, dtype=np.int64)
+        # Extract sequence information using MDTraj
+        sequence = [r.name for r in self.trajectory.topology.residues 
+                   if any(a.name in ['N', 'CA', 'C', 'O'] for a in r.atoms)]
+        self.aatype = np.array([residue_constants.restype_order.get(
+            residue_constants.restype_3to1.get(res, 'X'), residue_constants.restype_num)
+            for res in sequence])
         
         # Create metadata for the frames
         self._init_metadata()
@@ -596,16 +576,11 @@ class IDPEnsembleDataset(PdbDataset):
         self._log.info(f"{'Training' if self.is_training else 'Validation'}: {len(self.csv)} conformers with {self.n_residues} residues")
 
     def __getitem__(self, idx):
-        """Get a single frame and prepare it for training."""
         frame_idx = self.csv.iloc[idx]['frame_idx']
         
-        # Get coordinates for this frame
-        frame_coords = self.trajectory.xyz[frame_idx][self.backbone_indices]
-        # Convert to angstroms if needed (XTC is in nm, PDB already in angstroms)
-        if not hasattr(self, '_is_pdb'):
-            self._is_pdb = self.trajectory.unitcell_lengths is None
-        if not self._is_pdb:
-            frame_coords = frame_coords * 10  # Convert nm to angstroms
+        # Get backbone coordinates exactly as in rmsd evaluation
+        frame = self.backbone_traj[frame_idx]
+        backbone_coords = frame.xyz[0]  # [n_atoms, 3]
         
         # Initialize features needed by the model
         chain_feats = {
@@ -618,15 +593,16 @@ class IDPEnsembleDataset(PdbDataset):
             'torsion_angles_sin_cos': torch.zeros(self.n_residues, 7, 2),  # Placeholder
         }
         
-        # Fill in backbone atoms (N, CA, C)
+        # Fill in backbone atoms (N, CA, C, O)
         for i in range(self.n_residues):
             # Add backbone atoms to their correct positions in atom37
-            chain_feats['atom37_pos'][i, 0] = torch.from_numpy(frame_coords[i * 3 + 0])  # N
-            chain_feats['atom37_pos'][i, 1] = torch.from_numpy(frame_coords[i * 3 + 1])  # CA
-            chain_feats['atom37_pos'][i, 2] = torch.from_numpy(frame_coords[i * 3 + 2])  # C
+            chain_feats['atom37_pos'][i, 0] = torch.from_numpy(backbone_coords[i * 4 + 0])  # N
+            chain_feats['atom37_pos'][i, 1] = torch.from_numpy(backbone_coords[i * 4 + 1])  # CA 
+            chain_feats['atom37_pos'][i, 2] = torch.from_numpy(backbone_coords[i * 4 + 2])  # C
+            chain_feats['atom37_pos'][i, 4] = torch.from_numpy(backbone_coords[i * 4 + 3])  # O
             
             # Set mask for backbone atoms
-            chain_feats['atom37_mask'][i, 0:3] = 1.0  # Mask for N, CA, C
+            chain_feats['atom37_mask'][i, [0,1,2,4]] = 1.0  # Mask for N, CA, C, O
 
         # Calculate rigid body transforms from backbone atoms
         gt_bb_rigid = rigid_utils.Rigid.from_3_points(
@@ -665,19 +641,3 @@ class IDPEnsembleDataset(PdbDataset):
             return chain_feats
         else:
             return chain_feats, self.csv.iloc[idx]['pdb_name']
-
-def calc_dihedral(p1, p2, p3, p4):
-    """Calculate dihedral angle between 4 points."""
-    b1 = p2 - p1
-    b2 = p3 - p2
-    b3 = p4 - p3
-    
-    n1 = np.cross(b1, b2)
-    n2 = np.cross(b2, b3)
-    
-    m1 = np.cross(n1, b2/np.linalg.norm(b2))
-    
-    x = np.dot(n1, n2)
-    y = np.dot(m1, n2)
-    
-    return np.arctan2(y, x)
