@@ -11,8 +11,8 @@ experiment:
   use_warm_start_conf: True
   num_gpus: 2
   max_epochs: 500  
-  eval_epochs: 10   
-  ckpt_epochs: 10  
+  eval_epochs: 5   
+  ckpt_epochs: 5  
   num_loader_workers: 6
   use_wandb: True
   wandb_project: "se3-diffusion-ar"
