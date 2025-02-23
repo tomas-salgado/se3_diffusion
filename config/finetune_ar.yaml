@@ -6,7 +6,7 @@ experiment:
   name: ar_finetune
   batch_size: 256
   sample_mode: time_batch
-  learning_rate: 0.0001  
+  learning_rate: 0.00001  
   warm_start: ./weights  # Pre-trained weights
   use_warm_start_conf: True
   num_gpus: 2
