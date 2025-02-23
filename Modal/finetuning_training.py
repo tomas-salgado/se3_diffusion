@@ -21,10 +21,10 @@ image = (
 
 @app.function(
     image=image,
-    gpu="A100",
-    timeout=3600,
+    gpu="A100:2",
     volumes={"/outputs": volume},
-    secrets=[modal.Secret.from_name("wandb-secret")]
+    secrets=[modal.Secret.from_name("wandb-secret")],
+    timeout=86400  # Set timeout to 24 hours (in seconds)
 )
 def run_finetuning():
     import os
@@ -41,13 +41,17 @@ def run_finetuning():
     
     # Download MD data from Google Drive
     import gdown
-    url = "https://drive.google.com/file/d/1YLJqThMT-4vhI-ArEnmOvc-FaAE9zB1F/view?usp=drive_link"
-    output = "Tau5R2R3_apo.xtc"
+    url = "https://drive.google.com/file/d/1uNeCkgqEe_qNhoAnsE3faZmfTtGrAoMe/view?usp=drive_link"
+    output = "PED00016e001.pdb"
     gdown.download(url=url, output=output, fuzzy=True)
 
-    url = "https://drive.google.com/file/d/1Y_bkr-YHdgvF4S3Cuxh-Qa2-AVwdpH_W/view?usp=drive_link"
-    output = "Tau5R2R3_apo.pdb"
-    gdown.download(url=url, output=output, fuzzy=True)
+    # url = "https://drive.google.com/file/d/1YLJqThMT-4vhI-ArEnmOvc-FaAE9zB1F/view?usp=drive_link"
+    # output = "Tau5R2R3_apo.xtc"
+    # gdown.download(url=url, output=output, fuzzy=True)
+
+    # url = "https://drive.google.com/file/d/1Y_bkr-YHdgvF4S3Cuxh-Qa2-AVwdpH_W/view?usp=drive_link"
+    # output = "Tau5R2R3_apo.pdb"
+    # gdown.download(url=url, output=output, fuzzy=True)
     
     # Create directories for outputs
     os.makedirs("ckpt", exist_ok=True)
