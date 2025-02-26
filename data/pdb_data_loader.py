@@ -14,6 +14,8 @@ import logging
 import random
 import functools as fn
 import mdtraj as md
+import os
+from Bio import PDB
 
 from torch.utils import data
 from data import utils as du
@@ -528,35 +530,44 @@ class IDPEnsembleDataset(PdbDataset):
         # Load trajectory
         if pdb_path is not None:
             self._log.info(f"Loading multi-frame PDB ensemble from {pdb_path}")
-            self.trajectory = md.load(pdb_path)
+            
+            # Use BioPython's PDB parser
+            parser = PDB.PDBParser(QUIET=True)
+            self.structure = parser.get_structure('protein', pdb_path)
+            
+            print(f"Number of models: {len(self.structure)}")  # Debug print
+            
+            # Get first model and chain to extract sequence info
+            first_model = self.structure[0]
+            first_chain = list(first_model.get_chains())[0]
+            
+            # Get sequence and number of residues
+            sequence = []
+            for residue in first_chain:
+                if 'CA' in residue:  # Only include residues with CA atoms
+                    res_name = residue.get_resname()
+                    sequence.append(res_name)
+            
+            self.n_residues = len(sequence)
+            self.aatype = np.array([
+                residue_constants.restype_order.get(
+                    residue_constants.restype_3to1.get(res, 'X'), 
+                    residue_constants.restype_num
+                ) for res in sequence
+            ])
+            
+            # Create metadata for frames
+            self._init_metadata()
+            
         else:
             self._log.info(f"Loading topology from {top_path}")
             self.topology = md.load(top_path).topology
             self._log.info(f"Loading MD trajectory from {xtc_path}")
             self.trajectory = md.load(xtc_path, top=self.topology)
 
-        # Select backbone atoms exactly as in rmsd evaluation
-        self.backbone_traj = self.trajectory.atom_slice(self.trajectory.topology.select('backbone'))
-        if self.backbone_traj.n_atoms == 0:
-            raise ValueError("No backbone atoms found!")
-        
-        # Get residue information
-        self.n_residues = len(set(atom.residue.index for atom in self.trajectory.topology.atoms 
-                                if atom.name in ['N', 'CA', 'C', 'O']))
-        
-        # Extract sequence information using MDTraj
-        sequence = [r.name for r in self.trajectory.topology.residues 
-                   if any(a.name in ['N', 'CA', 'C', 'O'] for a in r.atoms)]
-        self.aatype = np.array([residue_constants.restype_order.get(
-            residue_constants.restype_3to1.get(res, 'X'), residue_constants.restype_num)
-            for res in sequence])
-        
-        # Create metadata for the frames
-        self._init_metadata()
-
     def _init_metadata(self):
         """Create metadata with train/validation split."""
-        n_frames = self.trajectory.n_frames
+        n_frames = len(self.structure)
         self._log.info(f"Found {n_frames} conformers in ensemble")
         
         # Create DataFrame with all frames
@@ -578,9 +589,9 @@ class IDPEnsembleDataset(PdbDataset):
     def __getitem__(self, idx):
         frame_idx = self.csv.iloc[idx]['frame_idx']
         
-        # Get backbone coordinates exactly as in rmsd evaluation
-        frame = self.backbone_traj[frame_idx]
-        backbone_coords = frame.xyz[0]  # [n_atoms, 3]
+        # Get coordinates from the specified model
+        model = self.structure[frame_idx]
+        chain = list(model.get_chains())[0]
         
         # Initialize features needed by the model
         chain_feats = {
@@ -594,15 +605,19 @@ class IDPEnsembleDataset(PdbDataset):
         }
         
         # Fill in backbone atoms (N, CA, C, O)
-        for i in range(self.n_residues):
-            # Add backbone atoms to their correct positions in atom37
-            chain_feats['atom37_pos'][i, 0] = torch.from_numpy(backbone_coords[i * 4 + 0])  # N
-            chain_feats['atom37_pos'][i, 1] = torch.from_numpy(backbone_coords[i * 4 + 1])  # CA 
-            chain_feats['atom37_pos'][i, 2] = torch.from_numpy(backbone_coords[i * 4 + 2])  # C
-            chain_feats['atom37_pos'][i, 4] = torch.from_numpy(backbone_coords[i * 4 + 3])  # O
-            
-            # Set mask for backbone atoms
-            chain_feats['atom37_mask'][i, [0,1,2,4]] = 1.0  # Mask for N, CA, C, O
+        for i, residue in enumerate(chain):
+            if 'N' in residue:
+                chain_feats['atom37_pos'][i, 0] = torch.tensor(residue['N'].get_coord())
+                chain_feats['atom37_mask'][i, 0] = 1.0
+            if 'CA' in residue:
+                chain_feats['atom37_pos'][i, 1] = torch.tensor(residue['CA'].get_coord())
+                chain_feats['atom37_mask'][i, 1] = 1.0
+            if 'C' in residue:
+                chain_feats['atom37_pos'][i, 2] = torch.tensor(residue['C'].get_coord())
+                chain_feats['atom37_mask'][i, 2] = 1.0
+            if 'O' in residue:
+                chain_feats['atom37_pos'][i, 4] = torch.tensor(residue['O'].get_coord())
+                chain_feats['atom37_mask'][i, 4] = 1.0
 
         # Calculate rigid body transforms from backbone atoms
         gt_bb_rigid = rigid_utils.Rigid.from_3_points(
@@ -617,7 +632,7 @@ class IDPEnsembleDataset(PdbDataset):
         chain_feats['sc_ca_t'] = torch.zeros(self.n_residues, 3)
 
         # Add noise according to diffusion schedule
-        if self.is_training:
+        if self.is_training and self._diffuser is not None:
             t = np.random.uniform(self._data_conf.min_t, 1.0)
             diff_feats = self._diffuser.forward_marginal(
                 rigids_0=gt_bb_rigid,
@@ -626,7 +641,7 @@ class IDPEnsembleDataset(PdbDataset):
             )
             chain_feats.update(diff_feats)
             chain_feats['t'] = t
-        else:
+        elif self._diffuser is not None:
             t = 1.0
             diff_feats = self.diffuser.sample_ref(
                 n_samples=gt_bb_rigid.shape[0],
@@ -641,3 +656,120 @@ class IDPEnsembleDataset(PdbDataset):
             return chain_feats
         else:
             return chain_feats, self.csv.iloc[idx]['pdb_name']
+
+# TODO: Remove this function, it is just for debugging and visualization
+def save_frames_as_pdbs(coordinates, sequence, output_dir, prefix="frame"):
+    """
+    Save multiple frames of coordinates as separate PDB files
+    
+    Parameters:
+    -----------
+    coordinates: np.ndarray 
+        Shape (n_frames, n_atoms, 3) array of atomic coordinates
+    sequence: str
+        Amino acid sequence
+    output_dir: str
+        Directory to save PDB files
+    prefix: str
+        Prefix for output filenames
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Create a PDB writer
+    pdb_io = PDB.PDBIO()
+    
+    for frame_idx, frame_coords in enumerate(coordinates):
+        # Create a new structure for this frame
+        structure = PDB.Structure.Structure('structure')
+        model = PDB.Model.Model(0)
+        chain = PDB.Chain.Chain('A')
+        
+        # Add residues and atoms
+        for res_idx, aa in enumerate(sequence):
+            residue = PDB.Residue.Residue((' ', res_idx+1, ' '), aa, '')
+            # Add CA atom
+            ca_atom = PDB.Atom.Atom('CA', frame_coords[res_idx], 0.0, 1.0, ' ',
+                              'CA', res_idx+1, 'C')
+            residue.add(ca_atom)
+            chain.add(residue)
+            
+        model.add(chain)
+        structure.add(model)
+        
+        # Save the frame
+        pdb_io.set_structure(structure)
+        output_file = os.path.join(output_dir, f"{prefix}_{frame_idx}.pdb")
+        pdb_io.save(output_file)
+
+# TODO: Remove this function, it is just for debugging and visualization
+def debug_visualization(dataset_item, output_dir, num_frames=10):
+    """
+    Save visualization checkpoints for a dataset item
+    
+    Parameters:
+    -----------
+    dataset_item: dict
+        Dictionary containing model inputs
+    output_dir: str
+        Directory to save debug PDB files
+    num_frames: int
+        Number of frames to save (if using multiple frames)
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Get coordinates and sequence
+    atom_positions = dataset_item['atom37_pos'].numpy()  # [n_residues, 37, 3]
+    atom_mask = dataset_item['atom37_mask'].numpy()  # [n_residues, 37]
+    aatype = dataset_item['aatype'].numpy()
+    
+    # Convert aatype to 3-letter codes
+    sequence = [residue_constants.restype_1to3[residue_constants.restypes[aa]] 
+               for aa in aatype]
+    
+    # Save input structure
+    save_structure(
+        atom_positions=atom_positions,
+        atom_mask=atom_mask,
+        sequence=sequence,
+        output_path=os.path.join(output_dir, "input_structure.pdb")
+    )
+    
+    print(f"Saved input structure to {output_dir}/input_structure.pdb")
+    print(f"Structure has {len(sequence)} residues")
+    print(f"Number of atoms with mask=1: {np.sum(atom_mask)}")
+
+def save_structure(atom_positions, atom_mask, sequence, output_path):
+    """Helper function to save a single structure"""
+    structure = PDB.Structure.Structure('structure')
+    model = PDB.Model.Model(0)
+    chain = PDB.Chain.Chain('A')
+    
+    # Add residues and atoms
+    for res_idx, (aa, pos, mask) in enumerate(zip(sequence, atom_positions, atom_mask)):
+        residue = PDB.Residue.Residue((' ', res_idx+1, ' '), aa, '')
+        
+        # Add all atoms that have a mask value of 1
+        for atom_idx, (atom_pos, atom_mask_val) in enumerate(zip(pos, mask)):
+            if atom_mask_val > 0:
+                atom_name = residue_constants.atom_types[atom_idx]
+                atom = PDB.Atom.Atom(
+                    atom_name,
+                    atom_pos,
+                    0.0,  # B-factor
+                    1.0,  # Occupancy
+                    ' ',  # Altloc
+                    atom_name,  # Fullname
+                    res_idx+1,  # Serial number
+                    element=atom_name[0]  # Element symbol
+                )
+                residue.add(atom)
+                
+        chain.add(residue)
+    
+    model.add(chain)
+    structure.add(model)
+    
+    # Save the structure
+    pdb_io = PDB.PDBIO()
+    pdb_io.set_structure(structure)
+    pdb_io.save(output_path)
