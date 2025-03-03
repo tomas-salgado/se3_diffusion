@@ -46,6 +46,12 @@ model:
   node_embed_size: 256
   edge_embed_size: 128
   dropout: 0.0
+  use_sequence_conditioning: False
+  conditioning_method: cross_attention
+  sequence_embed:
+    embed_dim: 1280
+    embedding_path: embeddings/p15PAF_idr_embeddings.txt
+    embedding_format: txt
   embed:
     index_embed_size: 32
     aatype_embed_size: 64

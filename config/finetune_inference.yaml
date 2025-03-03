@@ -2,8 +2,6 @@
 # Configuration for inference on SE(3) diffusion experiments.
 defaults:
   - base
-  - sequence_embed
-  - _self_
 
 inference:
   name: null
