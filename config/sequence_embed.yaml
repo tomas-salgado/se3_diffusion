@@ -1,5 +1,4 @@
 defaults:
-  - finetune_ar
   - _self_
 
 model:
