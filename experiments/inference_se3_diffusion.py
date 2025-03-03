@@ -505,6 +505,45 @@ class Sampler:
         )
         return tree.map_structure(lambda x: x[:, 0], sample_out)
 
+    def sample_with_conditioning(self, sequence: str, sample_length: int = None):
+        """Sample a protein structure conditioned on a specific sequence."""
+        if sample_length is None:
+            sample_length = len(sequence)
+        
+        # Initialize data
+        rigids_impute = torch.zeros((sample_length, 4, 4)).to(self.device)
+        torsion_impute = torch.zeros((sample_length, 7, 2)).to(self.device)
+        fixed_mask = torch.zeros(sample_length).to(self.device)
+        res_mask = torch.ones(sample_length).to(self.device)
+        
+        # Initialize data dictionary
+        data = self.init_data(
+            rigids_impute=rigids_impute,
+            torsion_impute=torsion_impute,
+            fixed_mask=fixed_mask,
+            res_mask=res_mask,
+        )
+        
+        # Add sequence for conditioning
+        data['sequence'] = [sequence]
+        
+        # Run inference with conditioning
+        with torch.no_grad():
+            out = self.exp.inference_fn(
+                data,
+                num_t=self._sample_conf.num_t,
+                min_t=self._sample_conf.min_t,
+                center=True,
+                aux_traj=True,
+                self_condition=self._sample_conf.self_condition,
+                noise_scale=self._sample_conf.noise_scale,
+            )
+        
+        # Process and save results
+        # ... (similar to the existing sample method)
+        
+        return out
+
 @hydra.main(version_base=None, config_path="../config", config_name="inference")
 def run(conf: DictConfig) -> None:
 

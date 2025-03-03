@@ -556,6 +556,12 @@ class IDPEnsembleDataset(PdbDataset):
                 ) for res in sequence
             ])
             
+            # Store the amino acid sequence as a string
+            self.sequence = ''.join([
+                residue_constants.restype_3to1.get(res, 'X') 
+                for res in sequence
+            ])
+            
             # Create metadata for frames
             self._init_metadata()
             
@@ -598,6 +604,7 @@ class IDPEnsembleDataset(PdbDataset):
             'aatype': torch.tensor(self.aatype).long(),
             'seq_idx': torch.arange(1, self.n_residues + 1),  # 1-based indexing
             'chain_idx': torch.ones(self.n_residues),  # Single chain
+            'sequence': self.sequence,  # Add the sequence string
             'res_mask': torch.ones(self.n_residues),
             'atom37_pos': torch.zeros(self.n_residues, 37, 3),
             'atom37_mask': torch.zeros(self.n_residues, 37),

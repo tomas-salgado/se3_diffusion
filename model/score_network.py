@@ -52,7 +52,7 @@ class Embedder(nn.Module):
         super(Embedder, self).__init__()
         self._model_conf = model_conf
         self._embed_conf = model_conf.embed
-
+        
         # Time step embedding
         index_embed_size = self._embed_conf.index_embed_size
         t_embed_size = index_embed_size
@@ -62,6 +62,13 @@ class Embedder(nn.Module):
         # Sequence index embedding
         node_embed_dims += index_embed_size
         edge_in += index_embed_size
+        
+        # Add sequence embedding conditioning if enabled
+        self.use_sequence_conditioning = False
+        if hasattr(self._model_conf, 'use_sequence_conditioning') and self._model_conf.use_sequence_conditioning:
+            self.use_sequence_conditioning = True
+            # Add sequence embedding dimension to node features
+            node_embed_dims += self._model_conf.sequence_embed.embed_dim
 
         node_embed_size = self._model_conf.node_embed_size
         self.node_embedder = nn.Sequential(
@@ -93,6 +100,16 @@ class Embedder(nn.Module):
             get_index_embedding,
             embed_size=self._embed_conf.index_embed_size
         )
+        
+        # Sequence embedding conditioning
+        if self.use_sequence_conditioning:
+            # Create cross-attention for sequence conditioning
+            if self._model_conf.conditioning_method == 'cross_attention':
+                self.conditioning_attn = nn.MultiheadAttention(
+                    embed_dim=node_embed_size,
+                    num_heads=4,
+                    batch_first=True
+                )
 
     def _cross_concat(self, feats_1d, num_batch, num_res):
         return torch.cat([
@@ -107,6 +124,7 @@ class Embedder(nn.Module):
             t,
             fixed_mask,
             self_conditioning_ca,
+            sequence_embedding=None,
         ):
         """Embeds a set of inputs
 
@@ -116,6 +134,7 @@ class Embedder(nn.Module):
             fixed_mask: mask of fixed (motif) residues.
             self_conditioning_ca: [..., N, 3] Ca positions of self-conditioning
                 input.
+            sequence_embedding: Optional sequence embedding for conditioning.
 
         Returns:
             node_embed: [B, N, D_node]
@@ -137,6 +156,12 @@ class Embedder(nn.Module):
         rel_seq_offset = seq_idx[:, :, None] - seq_idx[:, None, :]
         rel_seq_offset = rel_seq_offset.reshape([num_batch, num_res**2])
         pair_feats.append(self.index_embedder(rel_seq_offset))
+        
+        # Add sequence embedding for conditioning if provided
+        if self.use_sequence_conditioning and sequence_embedding is not None:
+            # Expand sequence embedding to match residue dimension
+            seq_embed_expanded = sequence_embedding.unsqueeze(1).expand(-1, num_res, -1)
+            node_feats.append(seq_embed_expanded)
 
         # Self-conditioning distogram.
         if self._embed_conf.embed_self_conditioning:
@@ -151,6 +176,24 @@ class Embedder(nn.Module):
         node_embed = self.node_embedder(torch.cat(node_feats, dim=-1).float())
         edge_embed = self.edge_embedder(torch.cat(pair_feats, dim=-1).float())
         edge_embed = edge_embed.reshape([num_batch, num_res, num_res, -1])
+        
+        # Apply conditioning via cross-attention if enabled
+        if self.use_sequence_conditioning and sequence_embedding is not None and self._model_conf.conditioning_method == 'cross_attention':
+            # Use sequence embedding as query for cross-attention
+            seq_embed_query = sequence_embedding.unsqueeze(1)  # [B, 1, D]
+            node_embed_context = node_embed  # [B, N, D]
+            
+            # Apply cross-attention
+            attn_output, _ = self.conditioning_attn(
+                query=seq_embed_query,
+                key=node_embed_context,
+                value=node_embed_context
+            )
+            
+            # Use attention output to modulate node embeddings
+            attn_output = attn_output.expand(-1, num_res, -1)
+            node_embed = node_embed + attn_output
+            
         return node_embed, edge_embed
 
 
@@ -190,6 +233,7 @@ class ScoreNetwork(nn.Module):
             t=input_feats['t'],
             fixed_mask=fixed_mask,
             self_conditioning_ca=input_feats['sc_ca_t'],
+            sequence_embedding=input_feats['sequence_embedding'],
         )
         edge_embed = init_edge_embed * edge_mask[..., None]
         node_embed = init_node_embed * bb_mask[..., None]
