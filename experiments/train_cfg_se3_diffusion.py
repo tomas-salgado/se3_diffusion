@@ -10,13 +10,22 @@ from torch.nn import functional as F
 from data.idp_cfg_dataset import IDPCFGDataset
 from experiments import train_se3_diffusion 
 
-class CFGExperiment(train_se3_diffusion.Experiment):
+class CFGExperiment:
     """Extends base Experiment class for CFG training."""
     
     def __init__(self, conf: DictConfig):
-        super().__init__(conf)
+        self.exp = train_se3_diffusion.Experiment(conf)
+        self._conf = conf
         self._log = logging.getLogger(__name__)
         
+    def train(self):
+        """Delegate to base experiment's train method"""
+        return self.exp.train()
+
+    def train_step(self, batch):
+        """Delegate to base experiment's train_step method"""
+        return self.exp.train_step(batch)
+
     def _setup_data(self):
         """Override data setup to use IDPCFGDataset."""
         self._log.info("Setting up CFG datasets...")
@@ -44,31 +53,6 @@ class CFGExperiment(train_se3_diffusion.Experiment):
             f"({len(self.train_dataset.p15_data)} p15, "
             f"{len(self.train_dataset.ar_data)} AR)"
         )
-
-    def train_step(self, batch):
-        """Single training step with CFG support."""
-        self.model.train()
-        self.optimizer.zero_grad()
-        
-        # Forward pass (CFG handling is done in ScoreNetwork)
-        out = self.model(batch)
-        
-        # Calculate losses
-        losses = {}
-        
-        # Standard diffusion losses from parent class
-        base_losses = super().train_step(batch)
-        losses.update(base_losses)
-        
-        # You might want to add CFG-specific losses here
-        # For example, tracking conditioned vs unconditioned performance
-        
-        # Backward pass
-        total_loss = sum(losses.values())
-        total_loss.backward()
-        self.optimizer.step()
-        
-        return losses
 
 @hydra.main(version_base=None, config_path="../config", config_name="finetune_cfg")
 def main(conf: DictConfig) -> None:
