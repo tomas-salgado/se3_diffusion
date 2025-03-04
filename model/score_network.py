@@ -139,6 +139,18 @@ class Embedder(nn.Module):
         Returns:
             node_embed: [B, N, D_node]
             edge_embed: [B, N, N, D_edge]
+            
+        Key CFG components:
+        1. During training:
+           - Randomly drop embeddings with probability cfg_dropout_prob
+           - When dropped, use zero embedding tensor
+           - Target conformations come from pretrained model outputs
+           
+        2. During inference:
+           - If cfg_scale is provided, run both conditioned and unconditioned
+           - Interpolate between outputs using cfg_scale
+           - cfg_scale=0 gives unconditioned output
+           - cfg_scale>0 strengthens conditioning (typical values: 3-7)
         """
         num_batch, num_res = seq_idx.shape
         node_feats = []
@@ -159,6 +171,10 @@ class Embedder(nn.Module):
         
         # Add sequence embedding for conditioning if provided
         if self.use_sequence_conditioning and sequence_embedding is not None:
+            # During training, randomly drop embeddings with cfg_dropout_prob
+            if self.training and torch.rand(1) < self._model_conf.cfg_dropout_prob:
+                sequence_embedding = torch.zeros_like(sequence_embedding)
+            
             # Expand sequence embedding to match residue dimension
             seq_embed_expanded = sequence_embedding.unsqueeze(1).expand(-1, num_res, -1)
             node_feats.append(seq_embed_expanded)
@@ -206,41 +222,90 @@ class ScoreNetwork(nn.Module):
         self.embedding_layer = Embedder(model_conf)
         self.diffuser = diffuser
         self.score_model = ipa_pytorch.IpaScore(model_conf, diffuser)
+        
+        # Initialize sequence embedder if conditioning is enabled
+        self.use_sequence_conditioning = False
+        if hasattr(self._model_conf, 'use_sequence_conditioning') and self._model_conf.use_sequence_conditioning:
+            self.use_sequence_conditioning = True
+            from model.sequence_embedder import SequenceEmbedder
+            self.sequence_embedder = SequenceEmbedder(model_conf)
+            
+            # Add dropout for classifier-free guidance
+            self.cfg_dropout_prob = self._model_conf.cfg_dropout_prob if hasattr(self._model_conf, 'cfg_dropout_prob') else 0.1
 
     def _apply_mask(self, aatype_diff, aatype_0, diff_mask):
         return diff_mask * aatype_diff + (1 - diff_mask) * aatype_0
 
-    def forward(self, input_feats):
-        """Forward computes the reverse diffusion conditionals p(X^t|X^{t+1})
-        for each item in the batch
-
-        Args:
-            X: the noised samples from the noising process, of shape [Batch, N, D].
-                Where the T time steps are t=1,...,T (i.e. not including the un-noised X^0)
-
-        Returns:
-            model_out: dictionary of model outputs.
-        """
-
-        # Frames as [batch, res, 7] tensors.
-        bb_mask = input_feats['res_mask'].type(torch.float32)  # [B, N]
+    def forward(self, input_feats, cfg_scale=None):
+        """Forward pass with optional classifier-free guidance"""
+        bb_mask = input_feats['res_mask'].type(torch.float32)
         fixed_mask = input_feats['fixed_mask'].type(torch.float32)
         edge_mask = bb_mask[..., None] * bb_mask[..., None, :]
+        
+        # Process sequence embeddings if conditioning is enabled
+        sequence_embedding = None
+        if self.use_sequence_conditioning:
+            if 'sequence' in input_feats:
+                sequence_embedding = self.sequence_embedder(
+                    input_feats['sequence'], 
+                    input_feats['t'].device
+                )
+                
+                # During training, randomly drop embeddings for CFG
+                if self.training and torch.rand(1) < self.cfg_dropout_prob:
+                    sequence_embedding = torch.zeros_like(sequence_embedding)
+                
+                # During inference with CFG, run both conditioned and unconditioned
+                if not self.training and cfg_scale is not None:
+                    # Unconditioned forward pass
+                    uncond_embedding = torch.zeros_like(sequence_embedding)
+                    uncond_node_embed, uncond_edge_embed = self.embedding_layer(
+                        seq_idx=input_feats['seq_idx'],
+                        t=input_feats['t'],
+                        fixed_mask=fixed_mask,
+                        self_conditioning_ca=input_feats['sc_ca_t'],
+                        sequence_embedding=uncond_embedding,
+                    )
+                    uncond_out = self.score_model(
+                        uncond_node_embed * bb_mask[..., None],
+                        uncond_edge_embed * edge_mask[..., None],
+                        input_feats
+                    )
+                    
+                    # Conditioned forward pass
+                    cond_node_embed, cond_edge_embed = self.embedding_layer(
+                        seq_idx=input_feats['seq_idx'],
+                        t=input_feats['t'],
+                        fixed_mask=fixed_mask,
+                        self_conditioning_ca=input_feats['sc_ca_t'],
+                        sequence_embedding=sequence_embedding,
+                    )
+                    cond_out = self.score_model(
+                        cond_node_embed * bb_mask[..., None],
+                        cond_edge_embed * edge_mask[..., None],
+                        input_feats
+                    )
+                    
+                    # Interpolate between conditioned and unconditioned outputs
+                    for key in cond_out:
+                        if isinstance(cond_out[key], torch.Tensor):
+                            cond_out[key] = uncond_out[key] + cfg_scale * (cond_out[key] - uncond_out[key])
+                    
+                    return cond_out
 
-        # Initial embeddings of positonal and relative indices.
+        # Regular forward pass (either training or non-CFG inference)
         init_node_embed, init_edge_embed = self.embedding_layer(
             seq_idx=input_feats['seq_idx'],
             t=input_feats['t'],
             fixed_mask=fixed_mask,
             self_conditioning_ca=input_feats['sc_ca_t'],
-            sequence_embedding=input_feats['sequence_embedding'],
+            sequence_embedding=sequence_embedding,
         )
         edge_embed = init_edge_embed * edge_mask[..., None]
         node_embed = init_node_embed * bb_mask[..., None]
-
-        # Run main network
+        
         model_out = self.score_model(node_embed, edge_embed, input_feats)
-
+        
         # Psi angle prediction
         gt_psi = input_feats['torsion_angles_sin_cos'][..., 2, :]
         psi_pred = self._apply_mask(

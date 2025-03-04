@@ -505,6 +505,35 @@ class Sampler:
         )
         return tree.map_structure(lambda x: x[:, 0], sample_out)
 
+    def sample_with_cfg(self, sequence: str, embedding_type: str = 'p15', cfg_scale: float = 3.0):
+        """Sample a protein structure with classifier-free guidance.
+        
+        Args:
+            sequence: Input protein sequence
+            embedding_type: Which embedding to use ('p15' or 'ar')
+            cfg_scale: Guidance scale (0 = unconditioned, >0 = stronger conditioning)
+        """
+        # Get sequence length
+        sample_length = len(sequence)
+        
+        # Initialize data
+        data = self._init_sample_data(sample_length)
+        
+        # Add sequence and get appropriate embedding
+        data['sequence'] = [sequence]
+        data['embedding_type'] = embedding_type
+        
+        # Run inference with CFG
+        with torch.no_grad():
+            out = self.exp.inference_fn(
+                data,
+                num_t=self._sample_conf.num_t,
+                min_t=self._sample_conf.min_t,
+                cfg_scale=cfg_scale,
+            )
+        
+        return out
+
 @hydra.main(version_base=None, config_path="../config", config_name="finetune_inference")
 def run(conf: DictConfig) -> None:
 
