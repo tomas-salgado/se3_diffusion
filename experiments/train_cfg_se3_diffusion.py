@@ -8,13 +8,14 @@ import numpy as np
 from omegaconf import DictConfig
 from torch.nn import functional as F
 from data.idp_cfg_dataset import IDPCFGDataset
-from experiments import train_se3_diffusion 
+from experiments import train_se3_diffusion
 
 class CFGExperiment:
     """Extends base Experiment class for CFG training."""
     
     def __init__(self, conf: DictConfig):
-        self.exp = train_se3_diffusion.Experiment(conf)
+        # Use keyword argument for base class initialization
+        self.exp = train_se3_diffusion.Experiment(conf=conf)
         self._conf = conf
         self._log = logging.getLogger(__name__)
         
@@ -57,6 +58,9 @@ class CFGExperiment:
 @hydra.main(version_base=None, config_path="../config", config_name="finetune_cfg")
 def main(conf: DictConfig) -> None:
     """Main training function."""
+    # Add some debug prints
+    print(f"Config type: {type(conf)}")
+    print(f"Config contents: {conf}")
     experiment = CFGExperiment(conf)
     experiment.train()
 
