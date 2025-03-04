@@ -9,8 +9,8 @@ class IDPCFGDataset(Dataset):
         self,
         p15_data_path: str,  # Path to p15 conformations
         ar_data_path: str,   # Path to AR conformations
-        p15_embedding_path: str,  # Path to single p15 embedding txt file
-        ar_embedding_path: str,   # Path to single AR embedding txt file
+        p15_embedding_path: str,  # Path to p15 embedding txt file
+        ar_embedding_path: str,   # Path to AR embedding txt file
         cfg_dropout_prob: float = 0.1,
     ):
         """Dataset for classifier-free guidance training with IDP data.
@@ -28,7 +28,11 @@ class IDPCFGDataset(Dataset):
         self.p15_data = du.load_structure_data(p15_data_path)
         self.ar_data = du.load_structure_data(ar_data_path)
         
-        # Load single embeddings from txt files
+        # Store paths for pretrained structures (same as input paths)
+        self.p15_pretrained_path = p15_data_path
+        self.ar_pretrained_path = ar_data_path
+        
+        # Load embeddings
         self.p15_embedding = self._load_single_embedding(p15_embedding_path)
         self.ar_embedding = self._load_single_embedding(ar_embedding_path)
         
@@ -95,8 +99,22 @@ class IDPCFGDataset(Dataset):
         }
 
     def _get_pretrained_structure(self, length: int) -> Dict:
-        """Get a pretrained-generated structure of specified length.
-        This should return a structure from your pretrained model's outputs
-        matching the desired length."""
-        # TODO: Implement this based on your pretrained model's outputs
-        pass 
+        """Get a structure from the appropriate conformations directory.
+        
+        Args:
+            length: Length of structure to return (either p15_length or ar_length)
+            
+        Returns:
+            Dictionary containing structure data
+        """
+        # Choose the appropriate dataset based on length
+        if length == self.p15_length:
+            data = self.p15_data
+            path = self.p15_pretrained_path
+        else:
+            data = self.ar_data
+            path = self.ar_pretrained_path
+            
+        # Randomly select one structure from the dataset
+        idx = np.random.randint(len(data))
+        return data[idx] 
