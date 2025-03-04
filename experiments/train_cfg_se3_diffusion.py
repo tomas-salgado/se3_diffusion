@@ -12,11 +12,9 @@ from experiments import train_se3_diffusion
 import glob
 from Bio import PDB
 from data import residue_constants
-from openfold.utils import rigid_utils
+from data import rigid_utils
 import warnings
-
-# Suppress the OpenMM deprecation warning
-warnings.filterwarnings('ignore', message="importing 'simtk.openmm' is deprecated")
+from data.idp_cfg_dataset import IDPCFGDataset, LengthBasedBatchSampler
 
 class CFGExperiment:
     """Extends base Experiment class for CFG training."""
@@ -35,44 +33,52 @@ class CFGExperiment:
         self.exp.create_dataset = self.create_dataset
     
     def create_dataset(self):
-        """Create datasets for CFG training with both p15 and ar conditions"""
-        # Get all PDB files for each condition
-        p15_pdbs = sorted(glob.glob(os.path.join(self._conf.data.p15_data_path, "*.pdb")))
-        ar_pdbs = sorted(glob.glob(os.path.join(self._conf.data.ar_data_path, "*.pdb")))
-        
-        self._log.info(f"Found {len(p15_pdbs)} P15 PDB files and {len(ar_pdbs)} AR PDB files")
-        
-        # For now, use all files for training since we have a small dataset
-        # We can add validation split later if needed
-        train_dataset = CombinedIDPDataset(
-            data_conf=self._conf.data,
-            diffuser=self.exp.diffuser,
-            p15_paths=p15_pdbs,
-            ar_paths=ar_pdbs,
-            is_training=True
+        """Create datasets for CFG training."""
+        # Create dataset
+        train_dataset = IDPCFGDataset(
+            p15_data_path=self._conf.data.p15_data_path,
+            ar_data_path=self._conf.data.ar_data_path,
+            p15_embedding_path=self._conf.data.p15_embedding_path,
+            ar_embedding_path=self._conf.data.ar_embedding_path,
+            pretrained_p15_path=self._conf.data.pretrained_p15_path,
+            pretrained_ar_path=self._conf.data.pretrained_ar_path,
+            cfg_dropout_prob=self._conf.model.cfg_dropout_prob
         )
         
-        # Use a small subset for validation
-        valid_dataset = CombinedIDPDataset(
-            data_conf=self._conf.data,
-            diffuser=self.exp.diffuser,
-            p15_paths=p15_pdbs[:1],  # Just use first file of each type for validation
-            ar_paths=ar_pdbs[:1],
-            is_training=False
+        # Create batch sampler
+        train_sampler = LengthBasedBatchSampler(
+            dataset=train_dataset,
+            batch_size=self._conf.experiment.batch_size,
+            drop_last=True  # Drop incomplete batches for training
         )
         
-        # Create data loaders
+        # Create data loader with custom sampler
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
-            batch_size=self._conf.experiment.batch_size,
-            shuffle=True,
+            batch_sampler=train_sampler,
             num_workers=self._conf.experiment.num_loader_workers
+        )
+        
+        # Similar for validation, but with smaller batch size and no dropping
+        valid_dataset = IDPCFGDataset(
+            p15_data_path=self._conf.data.p15_data_path,
+            ar_data_path=self._conf.data.ar_data_path,
+            p15_embedding_path=self._conf.data.p15_embedding_path,
+            ar_embedding_path=self._conf.data.ar_embedding_path,
+            pretrained_p15_path=self._conf.data.pretrained_p15_path,
+            pretrained_ar_path=self._conf.data.pretrained_ar_path,
+            cfg_dropout_prob=0.0  # No dropout during validation
+        )
+        
+        valid_sampler = LengthBasedBatchSampler(
+            dataset=valid_dataset,
+            batch_size=self._conf.experiment.eval_batch_size,
+            drop_last=False
         )
         
         valid_loader = torch.utils.data.DataLoader(
             valid_dataset,
-            batch_size=self._conf.experiment.eval_batch_size,
-            shuffle=False,
+            batch_sampler=valid_sampler,
             num_workers=self._conf.experiment.num_loader_workers
         )
         
