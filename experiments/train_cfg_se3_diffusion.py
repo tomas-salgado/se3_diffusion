@@ -12,8 +12,11 @@ from experiments import train_se3_diffusion
 import glob
 from Bio import PDB
 from data import residue_constants
-from data import rigid_utils
+from openfold.utils import rigid_utils
 import warnings
+
+# Suppress the OpenMM deprecation warning
+warnings.filterwarnings('ignore', message="importing 'simtk.openmm' is deprecated")
 
 class CFGExperiment:
     """Extends base Experiment class for CFG training."""
