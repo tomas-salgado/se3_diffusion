@@ -43,38 +43,30 @@ class CFGExperiment:
         ar_valid = ar_pdbs[int(len(ar_pdbs) * train_split):]
         
         # Create training datasets for both conditions
-        p15_train_dataset = IDPEnsembleDataset(
-            data_conf=self._conf.data,
-            diffuser=self.exp.diffuser,
-            is_training=True,
-            pdb_paths=p15_train
-        )
-        
-        ar_train_dataset = IDPEnsembleDataset(
-            data_conf=self._conf.data,
-            diffuser=self.exp.diffuser,
-            is_training=True,
-            pdb_paths=ar_train
-        )
+        train_datasets = []
+        for pdb_path in p15_train + ar_train:
+            dataset = IDPEnsembleDataset(
+                data_conf=self._conf.data,
+                diffuser=self.exp.diffuser,
+                is_training=True,
+                pdb_path=pdb_path
+            )
+            train_datasets.append(dataset)
         
         # Create validation datasets for both conditions
-        p15_valid_dataset = IDPEnsembleDataset(
-            data_conf=self._conf.data,
-            diffuser=self.exp.diffuser,
-            is_training=False,
-            pdb_paths=p15_valid
-        )
-        
-        ar_valid_dataset = IDPEnsembleDataset(
-            data_conf=self._conf.data,
-            diffuser=self.exp.diffuser,
-            is_training=False,
-            pdb_paths=ar_valid
-        )
+        valid_datasets = []
+        for pdb_path in p15_valid + ar_valid:
+            dataset = IDPEnsembleDataset(
+                data_conf=self._conf.data,
+                diffuser=self.exp.diffuser,
+                is_training=False,
+                pdb_path=pdb_path
+            )
+            valid_datasets.append(dataset)
         
         # Combine datasets for training and validation
-        train_dataset = torch.utils.data.ConcatDataset([p15_train_dataset, ar_train_dataset])
-        valid_dataset = torch.utils.data.ConcatDataset([p15_valid_dataset, ar_valid_dataset])
+        train_dataset = torch.utils.data.ConcatDataset(train_datasets)
+        valid_dataset = torch.utils.data.ConcatDataset(valid_datasets)
         
         # Create data loaders
         train_loader = torch.utils.data.DataLoader(
