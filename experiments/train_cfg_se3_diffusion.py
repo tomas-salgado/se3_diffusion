@@ -9,6 +9,7 @@ from omegaconf import DictConfig
 from torch.nn import functional as F
 from data.pdb_data_loader import IDPEnsembleDataset
 from experiments import train_se3_diffusion
+import glob
 
 class CFGExperiment:
     """Extends base Experiment class for CFG training."""
@@ -27,22 +28,53 @@ class CFGExperiment:
         self.exp.create_dataset = self.create_dataset
     
     def create_dataset(self):
-        """Create IDP ensemble datasets for training and validation"""
-        # Create training dataset
-        train_dataset = IDPEnsembleDataset(
+        """Create datasets for CFG training with both p15 and ar conditions"""
+        # Get all PDB files for each condition
+        p15_pdbs = glob.glob(os.path.join(self._conf.data.p15_data_path, "*.pdb"))
+        ar_pdbs = glob.glob(os.path.join(self._conf.data.ar_data_path, "*.pdb"))
+        
+        self._log.info(f"Found {len(p15_pdbs)} P15 PDB files and {len(ar_pdbs)} AR PDB files")
+        
+        # Split into train/validation
+        train_split = 0.8  # 80% for training
+        p15_train = p15_pdbs[:int(len(p15_pdbs) * train_split)]
+        p15_valid = p15_pdbs[int(len(p15_pdbs) * train_split):]
+        ar_train = ar_pdbs[:int(len(ar_pdbs) * train_split)]
+        ar_valid = ar_pdbs[int(len(ar_pdbs) * train_split):]
+        
+        # Create training datasets for both conditions
+        p15_train_dataset = IDPEnsembleDataset(
             data_conf=self._conf.data,
             diffuser=self.exp.diffuser,
             is_training=True,
-            pdb_path=os.path.join(self._conf.data.p15_data_path, "p15_ensemble.pdb")
+            pdb_paths=p15_train
         )
         
-        # Create validation dataset
-        valid_dataset = IDPEnsembleDataset(
+        ar_train_dataset = IDPEnsembleDataset(
+            data_conf=self._conf.data,
+            diffuser=self.exp.diffuser,
+            is_training=True,
+            pdb_paths=ar_train
+        )
+        
+        # Create validation datasets for both conditions
+        p15_valid_dataset = IDPEnsembleDataset(
             data_conf=self._conf.data,
             diffuser=self.exp.diffuser,
             is_training=False,
-            pdb_path=os.path.join(self._conf.data.ar_data_path, "ar_ensemble.pdb")
+            pdb_paths=p15_valid
         )
+        
+        ar_valid_dataset = IDPEnsembleDataset(
+            data_conf=self._conf.data,
+            diffuser=self.exp.diffuser,
+            is_training=False,
+            pdb_paths=ar_valid
+        )
+        
+        # Combine datasets for training and validation
+        train_dataset = torch.utils.data.ConcatDataset([p15_train_dataset, ar_train_dataset])
+        valid_dataset = torch.utils.data.ConcatDataset([p15_valid_dataset, ar_valid_dataset])
         
         # Create data loaders
         train_loader = torch.utils.data.DataLoader(
