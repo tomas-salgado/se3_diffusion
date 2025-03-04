@@ -21,7 +21,7 @@ class CFGExperiment:
         
     def train(self):
         """Delegate to base experiment's train method"""
-        return self.exp.train()
+        return self.exp.start_training()
 
     def train_step(self, batch):
         """Delegate to base experiment's train_step method"""
