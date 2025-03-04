@@ -1,0 +1,23 @@
+defaults:
+  - base
+  - _self_
+
+model:
+  use_sequence_conditioning: True
+  conditioning_method: cross_attention
+  cfg_dropout_prob: 0.1
+  sequence_embed:
+    embed_dim: 1280
+    p15_embedding_path: embeddings/p15_idr_embedding.txt
+    ar_embedding_path: embeddings/ar_idr_embedding.txt
+
+data:
+  p15_data_path: conformations/p15
+  ar_data_path: conformations/ar
+  pretrained_structures_path: data/pretrained_outputs/
+  
+training:
+  batch_size: 32
+  learning_rate: 1e-4
+  num_epochs: 100
+  cfg_dropout_prob: 0.1 
