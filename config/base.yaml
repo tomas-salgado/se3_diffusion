@@ -96,7 +96,7 @@ experiment:
 
   # Wandb logging
   wandb_dir: ./
-  use_wandb: True
+  use_wandb: False
 
   # How many steps to checkpoint between.
   ckpt_freq: 10000
