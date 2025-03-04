@@ -8,13 +8,13 @@ model:
   cfg_dropout_prob: 0.1
   sequence_embed:
     embed_dim: 1280
-    p15_embedding_path: embeddings/p15_idr_embedding.txt
-    ar_embedding_path: embeddings/ar_idr_embedding.txt
 
 data:
   p15_data_path: conformations/p15
   ar_data_path: conformations/ar
   pretrained_structures_path: data/pretrained_outputs/
+  p15_embedding_path: embeddings/p15_idr_embedding.txt
+  ar_embedding_path: embeddings/ar_idr_embedding.txt
   
 training:
   batch_size: 32
