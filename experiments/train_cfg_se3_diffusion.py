@@ -11,8 +11,9 @@ from data.pdb_data_loader import IDPEnsembleDataset
 from experiments import train_se3_diffusion
 import glob
 from Bio import PDB
-from data.residue_constants import residue_constants
-from data.rigid_utils import rigid_utils
+from data import residue_constants
+from data import rigid_utils
+import warnings
 
 class CFGExperiment:
     """Extends base Experiment class for CFG training."""
