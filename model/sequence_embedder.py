@@ -56,7 +56,5 @@ class SequenceEmbedder(nn.Module):
         # Expand single embedding to batch size
         embeddings = self.embedding.unsqueeze(0).expand(batch_size, -1).to(device)
         
-        # Project embeddings to the desired dimension
-        projected_embeddings = self.projection(embeddings)
-        
-        return projected_embeddings
+        # Return raw embeddings without projection - this matches what Embedder expects
+        return embeddings

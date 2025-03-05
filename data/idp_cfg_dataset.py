@@ -244,8 +244,8 @@ class IDPCFGDataset(Dataset):
             'rigids': gt_bb_rigid.to_tensor_7(), # [L, 7]
             'rigids_t': gt_bb_rigid.to_tensor_7(), # [L, 7] - for self-conditioning
             
-            # Sequence embedding for conditioning - this is what we need
-            'sequence': embedding,               # [1024] - raw embedding for sequence embedder
+            # Sequence embedding for conditioning - use sequences list format
+            'sequence': [embedding],             # List containing the raw embedding
             
             # Any other fields needed by the diffusion model
             'positions': positions,              # [L, 3, 3] - N, CA, C atom positions
