@@ -8,6 +8,18 @@ from data.utils import rigid_utils
 import logging
 
 class IDPCFGDataset(Dataset):
+    # Class variables to store shared data
+    _shared_data = {
+        'p15_data': None,
+        'ar_data': None,
+        'p15_embedding': None,
+        'ar_embedding': None,
+        'pretrained_p15': None,
+        'pretrained_ar': None,
+        'p15_length': None,
+        'ar_length': None
+    }
+
     def __init__(
         self,
         p15_data_path: str,  # Path to p15 conformations
@@ -47,68 +59,68 @@ class IDPCFGDataset(Dataset):
         if not os.path.exists(ar_embedding_path):
             raise ValueError(f"AR embedding path does not exist: {ar_embedding_path}")
         
-        # Load structure data using correct function
-        self._log.info(f"Loading P15 structures from {p15_data_path}...")
-        self.p15_data = du.load_ensemble_structure(p15_data_path)
-        self._log.info(f"Loading AR structures from {ar_data_path}...")
-        self.ar_data = du.load_ensemble_structure(ar_data_path)
-        
-        # Validate loaded data
-        if len(self.p15_data) == 0:
-            raise ValueError(f"No structures loaded from P15 data path: {p15_data_path}")
-        if len(self.ar_data) == 0:
-            raise ValueError(f"No structures loaded from AR data path: {ar_data_path}")
-        
-        # Load pretrained structures if provided
-        if pretrained_p15_path:
-            self._log.info(f"Loading pretrained P15 structures from {pretrained_p15_path}...")
-            if not os.path.exists(pretrained_p15_path):
-                raise ValueError(f"Pretrained P15 path does not exist: {pretrained_p15_path}")
-            self.pretrained_p15 = du.load_structure_dir(pretrained_p15_path)
-            if len(self.pretrained_p15) == 0:
-                raise ValueError(f"No structures loaded from pretrained P15 path: {pretrained_p15_path}")
-                
-        if pretrained_ar_path:
-            self._log.info(f"Loading pretrained AR structures from {pretrained_ar_path}...")
-            if not os.path.exists(pretrained_ar_path):
-                raise ValueError(f"Pretrained AR path does not exist: {pretrained_ar_path}")
-            self.pretrained_ar = du.load_structure_dir(pretrained_ar_path)
-            if len(self.pretrained_ar) == 0:
-                raise ValueError(f"No structures loaded from pretrained AR path: {pretrained_ar_path}")
-        
-        # Load embeddings
-        self._log.info("Loading sequence embeddings...")
-        self.p15_embedding = self._load_single_embedding(p15_embedding_path)
-        self.ar_embedding = self._load_single_embedding(ar_embedding_path)
-        
-        # Validate embeddings
-        if self.p15_embedding is None:
-            raise ValueError(f"Failed to load P15 embedding from: {p15_embedding_path}")
-        if self.ar_embedding is None:
-            raise ValueError(f"Failed to load AR embedding from: {ar_embedding_path}")
-        
-        # Validate embedding dimensions match
-        if self.p15_embedding.shape != self.ar_embedding.shape:
-            raise ValueError(f"Embedding dimension mismatch: P15 {self.p15_embedding.shape} vs AR {self.ar_embedding.shape}")
+        # Load data only if not already loaded
+        if IDPCFGDataset._shared_data['p15_data'] is None:
+            self._log.info(f"Loading P15 structures from {p15_data_path}...")
+            IDPCFGDataset._shared_data['p15_data'] = du.load_ensemble_structure(p15_data_path)
+            self._log.info(f"Loading AR structures from {ar_data_path}...")
+            IDPCFGDataset._shared_data['ar_data'] = du.load_ensemble_structure(ar_data_path)
+            
+            # Validate loaded data
+            if len(IDPCFGDataset._shared_data['p15_data']) == 0:
+                raise ValueError(f"No structures loaded from P15 data path: {p15_data_path}")
+            if len(IDPCFGDataset._shared_data['ar_data']) == 0:
+                raise ValueError(f"No structures loaded from AR data path: {ar_data_path}")
+            
+            # Load pretrained structures if provided
+            if pretrained_p15_path:
+                self._log.info(f"Loading pretrained P15 structures from {pretrained_p15_path}...")
+                if not os.path.exists(pretrained_p15_path):
+                    raise ValueError(f"Pretrained P15 path does not exist: {pretrained_p15_path}")
+                IDPCFGDataset._shared_data['pretrained_p15'] = du.load_structure_dir(pretrained_p15_path)
+                if len(IDPCFGDataset._shared_data['pretrained_p15']) == 0:
+                    raise ValueError(f"No structures loaded from pretrained P15 path: {pretrained_p15_path}")
+                    
+            if pretrained_ar_path:
+                self._log.info(f"Loading pretrained AR structures from {pretrained_ar_path}...")
+                if not os.path.exists(pretrained_ar_path):
+                    raise ValueError(f"Pretrained AR path does not exist: {pretrained_ar_path}")
+                IDPCFGDataset._shared_data['pretrained_ar'] = du.load_structure_dir(pretrained_ar_path)
+                if len(IDPCFGDataset._shared_data['pretrained_ar']) == 0:
+                    raise ValueError(f"No structures loaded from pretrained AR path: {pretrained_ar_path}")
+            
+            # Load embeddings
+            self._log.info("Loading sequence embeddings...")
+            IDPCFGDataset._shared_data['p15_embedding'] = self._load_single_embedding(p15_embedding_path)
+            IDPCFGDataset._shared_data['ar_embedding'] = self._load_single_embedding(ar_embedding_path)
+            
+            # Validate embeddings
+            if IDPCFGDataset._shared_data['p15_embedding'] is None:
+                raise ValueError(f"Failed to load P15 embedding from: {p15_embedding_path}")
+            if IDPCFGDataset._shared_data['ar_embedding'] is None:
+                raise ValueError(f"Failed to load AR embedding from: {ar_embedding_path}")
+            
+            # Validate embedding dimensions match
+            if IDPCFGDataset._shared_data['p15_embedding'].shape != IDPCFGDataset._shared_data['ar_embedding'].shape:
+                raise ValueError(f"Embedding dimension mismatch: P15 {IDPCFGDataset._shared_data['p15_embedding'].shape} vs AR {IDPCFGDataset._shared_data['ar_embedding'].shape}")
+            
+            # Store lengths
+            IDPCFGDataset._shared_data['p15_length'] = len(IDPCFGDataset._shared_data['p15_data'][0]['positions'])
+            IDPCFGDataset._shared_data['ar_length'] = len(IDPCFGDataset._shared_data['ar_data'][0]['positions'])
+            
+            # Log dataset statistics
+            self._log.info("Dataset initialization complete:")
+            self._log.info(f"- P15 structures: {len(IDPCFGDataset._shared_data['p15_data'])} with length {IDPCFGDataset._shared_data['p15_length']}")
+            self._log.info(f"- AR structures: {len(IDPCFGDataset._shared_data['ar_data'])} with length {IDPCFGDataset._shared_data['ar_length']}")
+            self._log.info(f"- Embedding dimension: {IDPCFGDataset._shared_data['p15_embedding'].shape}")
+            if pretrained_p15_path:
+                self._log.info(f"- Pretrained P15 structures: {len(IDPCFGDataset._shared_data['pretrained_p15'])}")
+            if pretrained_ar_path:
+                self._log.info(f"- Pretrained AR structures: {len(IDPCFGDataset._shared_data['pretrained_ar'])}")
         
         # Store parameters
         self.cfg_dropout_prob = cfg_dropout_prob
         self._is_training = is_training
-        
-        # Store lengths for convenience
-        self.p15_length = len(self.p15_data[0]['positions'])
-        self.ar_length = len(self.ar_data[0]['positions'])
-        
-        # Log dataset statistics
-        self._log.info("Dataset initialization complete:")
-        self._log.info(f"- P15 structures: {len(self.p15_data)} with length {self.p15_length}")
-        self._log.info(f"- AR structures: {len(self.ar_data)} with length {self.ar_length}")
-        self._log.info(f"- Embedding dimension: {self.p15_embedding.shape}")
-        if pretrained_p15_path:
-            self._log.info(f"- Pretrained P15 structures: {len(self.pretrained_p15)}")
-        if pretrained_ar_path:
-            self._log.info(f"- Pretrained AR structures: {len(self.pretrained_ar)}")
-        self._log.info(f"- CFG dropout probability: {cfg_dropout_prob}")
 
     def _load_single_embedding(self, path):
         """Load embedding from file."""
@@ -125,22 +137,22 @@ class IDPCFGDataset(Dataset):
             return None
 
     def __len__(self):
-        return len(self.p15_data) + len(self.ar_data)
+        return len(IDPCFGDataset._shared_data['p15_data']) + len(IDPCFGDataset._shared_data['ar_data'])
 
     def __getitem__(self, idx):
         # Determine if this sample is from p15 or AR dataset
-        is_p15 = idx < len(self.p15_data)
+        is_p15 = idx < len(IDPCFGDataset._shared_data['p15_data'])
         
         if is_p15:
-            data = self.p15_data[idx]
-            embedding = self.p15_embedding  # Use the single p15 embedding
-            length = self.p15_length
+            data = IDPCFGDataset._shared_data['p15_data'][idx]
+            embedding = IDPCFGDataset._shared_data['p15_embedding']  # Use the single p15 embedding
+            length = IDPCFGDataset._shared_data['p15_length']
             self._log.debug(f"Loading P15 structure {idx}")
         else:
-            adj_idx = idx - len(self.p15_data)
-            data = self.ar_data[adj_idx]
-            embedding = self.ar_embedding  # Use the single AR embedding
-            length = self.ar_length
+            adj_idx = idx - len(IDPCFGDataset._shared_data['p15_data'])
+            data = IDPCFGDataset._shared_data['ar_data'][adj_idx]
+            embedding = IDPCFGDataset._shared_data['ar_embedding']  # Use the single AR embedding
+            length = IDPCFGDataset._shared_data['ar_length']
             self._log.debug(f"Loading AR structure {adj_idx}")
 
         # Apply CFG dropout during training
@@ -151,10 +163,10 @@ class IDPCFGDataset(Dataset):
             
             # Use pretrained-generated structures matching the length
             if is_p15:
-                data = self._get_pretrained_structure(self.p15_length)
+                data = self._get_pretrained_structure(IDPCFGDataset._shared_data['p15_length'])
                 self._log.debug("Using pretrained P15 structure")
             else:
-                data = self._get_pretrained_structure(self.ar_length)
+                data = self._get_pretrained_structure(IDPCFGDataset._shared_data['ar_length'])
                 self._log.debug("Using pretrained AR structure")
 
         # Convert positions to tensor
@@ -208,12 +220,10 @@ class IDPCFGDataset(Dataset):
             Dictionary containing structure data
         """
         # Choose the appropriate dataset based on length
-        if length == self.p15_length:
-            data = self.p15_data
-            path = self.p15_data_path
+        if length == IDPCFGDataset._shared_data['p15_length']:
+            data = IDPCFGDataset._shared_data['pretrained_p15']
         else:
-            data = self.ar_data
-            path = self.ar_data_path
+            data = IDPCFGDataset._shared_data['pretrained_ar']
             
         # Randomly select one structure from the dataset
         idx = np.random.randint(len(data))
