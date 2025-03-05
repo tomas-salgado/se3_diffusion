@@ -232,38 +232,27 @@ class IDPCFGDataset(Dataset):
         
         # Need to match the expected input format
         return {
-            # Fields required by ScoreNetwork
+            # Required features used directly by ScoreNetwork's forward method
             'res_mask': mask,                    # [L]
             'seq_idx': seq_idx,                  # [L]
             'fixed_mask': fixed_mask,            # [L]
+            'sc_ca_t': positions[:, 1],          # [L, 3] - CA positions for self-conditioning
+            't': t_tensor,                       # [1] - 1D tensor for timestep
+            
+            # Features for the score model
             'torsion_angles_sin_cos': torsion_angles,  # [L, 7, 2]
-            'sc_ca_t': positions[:, 1],          # [L, 3] - CA positions
             'rigids': gt_bb_rigid.to_tensor_7(), # [L, 7]
             'rigids_t': gt_bb_rigid.to_tensor_7(), # [L, 7] - for self-conditioning
             
-            # Additional fields for CFG
-            'sequence_embedding': sequence_embedding,  # [L, 1024] - expanded to match residue dimension
-            'is_p15': torch.tensor(is_p15, dtype=torch.float32),      # scalar
-            
-            # Time information for diffusion
-            't': t_tensor,                       # [1] - 1D tensor for timestep
+            # Sequence embedding for conditioning - this is what we need
+            'sequence': embedding,               # [1024] - raw embedding for sequence embedder
             
             # Any other fields needed by the diffusion model
-            'positions': positions,               # [L, 3]
-            'length': torch.tensor(length, dtype=torch.long),         # scalar
+            'positions': positions,              # [L, 3, 3] - N, CA, C atom positions
+            'length': torch.tensor(length, dtype=torch.long),  # scalar
             
-            # Additional fields that might be needed
-            'aatype': torch.zeros(length, dtype=torch.long),       # [L] - amino acid types (placeholder)
-            'chain_idx': torch.zeros(length, dtype=torch.long),    # [L] - chain indices (placeholder)
-            'chain_mask': torch.ones(length, dtype=torch.float32),    # [L] - chain mask (placeholder)
-            'chain_encoding_all': torch.zeros(length, dtype=torch.long),  # [L] - chain encoding (placeholder)
-            
-            # New features for the model
-            'edge_features': edge_features,      # [L, 128] - Edge features
-            'pos_encoding': pos_encoding,        # [L, 16] - Positional encoding
-            'chain_embedding': chain_embedding,  # [L, 16] - Chain embedding
-            'orientation_features': orientation_features,  # [L, 7] - Orientation features
-            'aatype_embedding': aatype_embedding,  # [L, 64] - Amino acid type embedding
+            # Metadata
+            'is_p15': torch.tensor(is_p15, dtype=torch.float32),  # scalar
         }
 
     def _get_pretrained_structure(self, length: int) -> Dict:
