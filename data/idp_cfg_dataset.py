@@ -194,6 +194,9 @@ class IDPCFGDataset(Dataset):
         # Sample time uniformly between 0 and 1 for training
         t = torch.rand(1).item() if self._is_training else 1.0
         
+        # Create timestep tensor with correct shape [1]
+        t_tensor = torch.tensor(t).reshape(-1)  # This ensures 1D shape
+        
         # Expand sequence embedding to match residue dimension
         sequence_embedding = embedding.unsqueeze(0).expand(length, -1)  # [L, 1024]
         
@@ -206,7 +209,7 @@ class IDPCFGDataset(Dataset):
         self._log.debug(f"- torsion_angles: {torsion_angles.shape}")
         self._log.debug(f"- gt_bb_rigid: {gt_bb_rigid.shape}")
         self._log.debug(f"- sequence_embedding: {sequence_embedding.shape}")
-        self._log.debug(f"- t: {t}")
+        self._log.debug(f"- t: {t_tensor.shape}")
         
         # Need to match the expected input format
         return {
@@ -224,7 +227,7 @@ class IDPCFGDataset(Dataset):
             'is_p15': torch.tensor(is_p15),      # scalar
             
             # Time information for diffusion
-            't': torch.tensor([t]),              # [1] - needs to be a tensor for the model
+            't': t_tensor,                       # [1] - 1D tensor for timestep
             
             # Any other fields needed by the diffusion model
             'positions': positions,               # [L, 3]

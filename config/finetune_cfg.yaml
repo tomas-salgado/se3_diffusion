@@ -7,7 +7,7 @@ model:
   conditioning_method: cross_attention
   cfg_dropout_prob: 0.1
   sequence_embed:
-    embed_dim: 1280
+    embed_dim: 1024
 
 data:
   p15_data_path: "ensembles/p15_ensemble.pdb"

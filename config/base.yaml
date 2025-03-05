@@ -50,7 +50,7 @@ model:
   conditioning_method: cross_attention
   cfg_dropout_prob: 0.1  # Probability of dropping embeddings during training
   sequence_embed:
-    embed_dim: 1280
+    embed_dim: 1024
     embedding_path: embeddings/p15PAF_idr_embedding.txt
     embedding_format: txt
   embed:
