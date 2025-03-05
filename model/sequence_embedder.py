@@ -15,6 +15,9 @@ class SequenceEmbedder(nn.Module):
         # Embedding dimension
         self.embed_dim = self._embed_conf.embed_dim
         
+        # Whether to adapt dimensions
+        self.adapt_dimensions = self._embed_conf.get('adapt_dimensions', True)
+        
         # Embedding projection layers
         self.projection = nn.Sequential(
             nn.Linear(self.embed_dim, self._model_conf.node_embed_size),
@@ -24,30 +27,55 @@ class SequenceEmbedder(nn.Module):
         )
         
         # Load embedding from text file
-        self.embedding = self.load_embedding(self._embed_conf.embedding_path)
+        self.embedding, actual_dim = self.load_embedding(self._embed_conf.embedding_path)
+        
+        # If the loaded embedding dimension doesn't match the expected dimension,
+        # create a dimension adapter layer
+        if actual_dim != self.embed_dim and self.adapt_dimensions:
+            print(f"Creating dimension adapter: {actual_dim} -> {self.embed_dim}")
+            self.dim_adapter = nn.Linear(actual_dim, self.embed_dim)
+        else:
+            if actual_dim != self.embed_dim and not self.adapt_dimensions:
+                print(f"WARNING: Embedding dimensions don't match ({actual_dim} != {self.embed_dim}) but adapt_dimensions=False")
+            self.dim_adapter = None
     
-    def load_embedding(self, path: str) -> torch.Tensor:
-        """Load embedding from text file."""
+    def load_embedding(self, path: str) -> tuple:
+        """Load embedding from text file.
+        
+        Returns:
+            Tuple of (embedding tensor, actual dimension)
+        """
         try:
             # Read the text file
             with open(path, 'r') as f:
                 # Read the line and split by comma
                 embedding_str = f.read().strip()
-                embedding_values = [float(x) for x in embedding_str.split(',')]
+                
+                # Remove square brackets if present
+                if embedding_str.startswith('[') and embedding_str.endswith(']'):
+                    embedding_str = embedding_str[1:-1]
+                
+                # Clean the string (remove newlines, extra spaces)
+                embedding_str = embedding_str.replace('\n', '').replace(' ', '')
+                
+                embedding_values = [float(x) for x in embedding_str.split(',') if x.strip()]
             
             # Convert to tensor
             embedding = torch.tensor(embedding_values, dtype=torch.float32)
+            actual_dim = embedding.shape[0]
             
-            # Verify dimension
-            if embedding.shape[0] != self.embed_dim:
-                raise ValueError(f"Embedding dimension mismatch. Expected {self.embed_dim}, got {embedding.shape[0]}")
-            
+            # Log the actual dimension
             print(f"Loaded embedding from {path} with shape {embedding.shape}")
-            return embedding
+            
+            # Note: We're not checking against self.embed_dim here, as we'll handle
+            # dimension mismatches with a projection layer
+            
+            return embedding, actual_dim
             
         except Exception as e:
             print(f"Error loading embedding from {path}: {e}")
-            return torch.zeros(self.embed_dim, dtype=torch.float32)
+            # Return zero tensor with the expected dimension
+            return torch.zeros(self.embed_dim, dtype=torch.float32), self.embed_dim
     
     def forward(self, sequences, device: torch.device) -> torch.Tensor:
         """Get embedding for a batch of sequences and project them.
@@ -67,6 +95,10 @@ class SequenceEmbedder(nn.Module):
         else:
             # If we received a tensor, use it directly
             embeddings = sequences.to(device)
+        
+        # Apply dimension adapter if needed
+        if self.dim_adapter is not None:
+            embeddings = self.dim_adapter(embeddings)
             
         # Project embeddings to the desired dimension
         projected_embeddings = self.projection(embeddings)
