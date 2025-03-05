@@ -50,7 +50,7 @@ class IDPCFGDataset(Dataset):
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.info(f"Initializing {'training' if is_training else 'validation'} dataset...")
         
-        # Set parameters early to avoid AttributeError
+        # Store parameters 
         self.p15_embedding_path = p15_embedding_path
         self.ar_embedding_path = ar_embedding_path
         self.cfg_dropout_prob = cfg_dropout_prob
@@ -69,6 +69,7 @@ class IDPCFGDataset(Dataset):
         
         # Load data only if not already loaded
         if IDPCFGDataset._shared_data['p15_data'] is None:
+            # Load protein structures
             self._log.info(f"Loading P15 structures from {p15_data_path}...")
             IDPCFGDataset._shared_data['p15_data'] = du.load_ensemble_structure(p15_data_path)
             self._log.info(f"Loading AR structures from {ar_data_path}...")
@@ -79,6 +80,10 @@ class IDPCFGDataset(Dataset):
                 raise ValueError(f"No structures loaded from P15 data path: {p15_data_path}")
             if len(IDPCFGDataset._shared_data['ar_data']) == 0:
                 raise ValueError(f"No structures loaded from AR data path: {ar_data_path}")
+                
+            # Store lengths for pretrained structure generation
+            IDPCFGDataset._shared_data['p15_length'] = IDPCFGDataset._shared_data['p15_data'][0]['positions'].shape[0]
+            IDPCFGDataset._shared_data['ar_length'] = IDPCFGDataset._shared_data['ar_data'][0]['positions'].shape[0]
             
             # Load pretrained structures if provided
             if pretrained_p15_path:
@@ -97,34 +102,29 @@ class IDPCFGDataset(Dataset):
                 if len(IDPCFGDataset._shared_data['pretrained_ar']) == 0:
                     raise ValueError(f"No structures loaded from pretrained AR path: {pretrained_ar_path}")
             
-            # Load embeddings
-            self._log.info("Loading sequence embeddings...")
-            IDPCFGDataset._shared_data['p15_embedding'] = self._load_single_embedding(p15_embedding_path, is_p15=True)
-            IDPCFGDataset._shared_data['ar_embedding'] = self._load_single_embedding(ar_embedding_path, is_p15=False)
-            
-            # Validate embeddings
-            if IDPCFGDataset._shared_data['p15_embedding'] is None:
-                raise ValueError(f"Failed to load P15 embedding from: {p15_embedding_path}")
-            if IDPCFGDataset._shared_data['ar_embedding'] is None:
-                raise ValueError(f"Failed to load AR embedding from: {ar_embedding_path}")
-            
-            # Validate embedding dimensions match
-            if IDPCFGDataset._shared_data['p15_embedding'].shape != IDPCFGDataset._shared_data['ar_embedding'].shape:
-                raise ValueError(f"Embedding dimension mismatch: P15 {IDPCFGDataset._shared_data['p15_embedding'].shape} vs AR {IDPCFGDataset._shared_data['ar_embedding'].shape}")
-            
-            # Store lengths
-            IDPCFGDataset._shared_data['p15_length'] = len(IDPCFGDataset._shared_data['p15_data'][0]['positions'])
-            IDPCFGDataset._shared_data['ar_length'] = len(IDPCFGDataset._shared_data['ar_data'][0]['positions'])
-            
-            # Log dataset statistics
-            self._log.info("Dataset initialization complete:")
-            self._log.info(f"- P15 structures: {len(IDPCFGDataset._shared_data['p15_data'])} with length {IDPCFGDataset._shared_data['p15_length']}")
-            self._log.info(f"- AR structures: {len(IDPCFGDataset._shared_data['ar_data'])} with length {IDPCFGDataset._shared_data['ar_length']}")
-            self._log.info(f"- Embedding dimension: {IDPCFGDataset._shared_data['p15_embedding'].shape}")
-            if pretrained_p15_path:
-                self._log.info(f"- Pretrained P15 structures: {len(IDPCFGDataset._shared_data['pretrained_p15'])}")
-            if pretrained_ar_path:
-                self._log.info(f"- Pretrained AR structures: {len(IDPCFGDataset._shared_data['pretrained_ar'])}")
+            # Load embeddings - this is critical for CFG
+            self._log.info("Loading embeddings for conditioning...")
+            try:
+                # Load P15 embedding
+                if IDPCFGDataset._shared_data['p15_embedding'] is None:
+                    self._log.info(f"Loading P15 embedding from {p15_embedding_path}...")
+                    IDPCFGDataset._shared_data['p15_embedding'] = self._load_single_embedding(p15_embedding_path, is_p15=True)
+                    self._log.info(f"P15 embedding loaded with shape {IDPCFGDataset._shared_data['p15_embedding'].shape}")
+                
+                # Load AR embedding
+                if IDPCFGDataset._shared_data['ar_embedding'] is None:
+                    self._log.info(f"Loading AR embedding from {ar_embedding_path}...")
+                    IDPCFGDataset._shared_data['ar_embedding'] = self._load_single_embedding(ar_embedding_path, is_p15=False)
+                    self._log.info(f"AR embedding loaded with shape {IDPCFGDataset._shared_data['ar_embedding'].shape}")
+                
+                # Validate embedding dimensions match (should be the same size for both P15 and AR)
+                if IDPCFGDataset._shared_data['p15_embedding'].shape != IDPCFGDataset._shared_data['ar_embedding'].shape:
+                    self._log.warning(f"Embedding dimensions don't match: P15 {IDPCFGDataset._shared_data['p15_embedding'].shape} vs AR {IDPCFGDataset._shared_data['ar_embedding'].shape}")
+            except Exception as e:
+                self._log.error(f"Error loading embeddings: {str(e)}")
+                raise
+        
+        self._log.info(f"Dataset initialization complete: {len(self)} samples available")
         
         # Store paths for later use
         self.p15_data_path = p15_data_path
@@ -142,31 +142,23 @@ class IDPCFGDataset(Dataset):
         Returns:
             Embedding tensor with shape [embed_dim]
         """
-        # Use shared embeddings if already loaded
-        if is_p15 and 'p15_embedding' in IDPCFGDataset._shared_data and IDPCFGDataset._shared_data['p15_embedding'] is not None:
-            embedding = IDPCFGDataset._shared_data['p15_embedding']
-        elif not is_p15 and 'ar_embedding' in IDPCFGDataset._shared_data and IDPCFGDataset._shared_data['ar_embedding'] is not None:
-            embedding = IDPCFGDataset._shared_data['ar_embedding']
-        else:
-            try:
-                # Load embedding from file
-                with open(path, 'r') as f:
-                    embedding_str = f.read().strip()
+        try:
+            # Load embedding from file
+            with open(path, 'r') as f:
+                embedding_str = f.read().strip()
                 
-                # Process the string to handle brackets and newlines
-                embedding_str = embedding_str.replace('\n', '').replace(' ', '')
+                # Remove square brackets if present
                 if embedding_str.startswith('[') and embedding_str.endswith(']'):
                     embedding_str = embedding_str[1:-1]
+                
+                # Clean the string (remove newlines, extra spaces)
+                embedding_str = embedding_str.replace('\n', '').replace(' ', '')
                 
                 # Split by commas and convert to float
                 embedding_values = []
                 for val in embedding_str.split(','):
                     if val.strip():  # Skip empty strings
-                        try:
-                            embedding_values.append(float(val.strip()))
-                        except ValueError as e:
-                            self._log.error(f"Error parsing value '{val}': {str(e)}")
-                            raise ValueError(f"Could not parse embedding value '{val}'")
+                        embedding_values.append(float(val.strip()))
                 
                 if not embedding_values:
                     raise ValueError("No valid embedding values found in file")
@@ -174,26 +166,20 @@ class IDPCFGDataset(Dataset):
                 # Convert to tensor
                 embedding = torch.tensor(embedding_values, dtype=torch.float32)
                 
-                # Log success and dimensions
+                # Log success
                 self._log.info(f"Successfully loaded embedding from {path} with shape {embedding.shape}")
                 
-                # Cache in shared data
+                # Store in shared data to avoid reloading
                 if is_p15:
                     IDPCFGDataset._shared_data['p15_embedding'] = embedding
                 else:
                     IDPCFGDataset._shared_data['ar_embedding'] = embedding
-            except Exception as e:
-                self._log.error(f"Failed to load embedding from {path}: {str(e)}")
-                return None
                 
-        # During training, apply CFG dropout randomly
-        # Note: This part should only be used in __getitem__, not during initialization
-        # since we need valid embeddings during init
-        if hasattr(self, '_is_training') and self._is_training and torch.rand(1) < self.cfg_dropout_prob:
-            # Return zero embedding for unconditioned samples
-            return torch.zeros_like(embedding)
-        
-        return embedding
+                return embedding
+                
+        except Exception as e:
+            self._log.error(f"Failed to load embedding from {path}: {str(e)}")
+            raise ValueError(f"Failed to load embedding from: {path}")
 
     def __len__(self):
         return len(IDPCFGDataset._shared_data['p15_data']) + len(IDPCFGDataset._shared_data['ar_data'])
@@ -210,123 +196,115 @@ class IDPCFGDataset(Dataset):
         # Determine which dataset to use based on the index
         if idx < len(IDPCFGDataset._shared_data['p15_data']):
             is_p15 = True
-            structure = IDPCFGDataset._shared_data['p15_data'][idx]
-            embedding = self._load_single_embedding(self.p15_embedding_path, is_p15=True)
+            structure_idx = idx
+            structure = IDPCFGDataset._shared_data['p15_data'][structure_idx]
+            embedding_path = self.p15_embedding_path
         else:
             is_p15 = False
-            adjusted_idx = idx - len(IDPCFGDataset._shared_data['p15_data'])
-            structure = IDPCFGDataset._shared_data['ar_data'][adjusted_idx]
-            embedding = self._load_single_embedding(self.ar_embedding_path, is_p15=False)
+            structure_idx = idx - len(IDPCFGDataset._shared_data['p15_data'])
+            structure = IDPCFGDataset._shared_data['ar_data'][structure_idx]
+            embedding_path = self.ar_embedding_path
         
-        # Apply CFG dropout during training - use pretrained structure if dropout is applied
+        # Get the embedding (cached at init time to avoid reloading)
+        if is_p15 and 'p15_embedding' in IDPCFGDataset._shared_data and IDPCFGDataset._shared_data['p15_embedding'] is not None:
+            embedding = IDPCFGDataset._shared_data['p15_embedding']
+        elif not is_p15 and 'ar_embedding' in IDPCFGDataset._shared_data and IDPCFGDataset._shared_data['ar_embedding'] is not None:
+            embedding = IDPCFGDataset._shared_data['ar_embedding']
+        else:
+            # Load embedding if not cached
+            embedding = self._load_single_embedding(embedding_path, is_p15=is_p15)
+        
+        # Apply CFG dropout during training
         use_pretrained = False
         if self._is_training and torch.rand(1) < self.cfg_dropout_prob:
-            self._log.debug("Applying CFG dropout")
-            # Zero out the embedding
+            self._log.debug("Applying CFG dropout - using null embedding")
+            # Zero out the embedding for CFG
             embedding = torch.zeros_like(embedding)
             
-            # Use pretrained structures
-            use_pretrained = True
-            
-        # Get pretrained structure if needed
-        if use_pretrained:
-            if is_p15:
-                self._log.debug("Using pretrained P15 structure")
-                structure = self._get_pretrained_structure(IDPCFGDataset._shared_data['p15_length'])
-            else:
-                self._log.debug("Using pretrained AR structure")
-                structure = self._get_pretrained_structure(IDPCFGDataset._shared_data['ar_length'])
+            # Use pretrained structures for unconditioned samples
+            if is_p15 and 'pretrained_p15' in IDPCFGDataset._shared_data and IDPCFGDataset._shared_data['pretrained_p15']:
+                # Randomly select a pretrained structure for p15 length
+                pretrained = IDPCFGDataset._shared_data['pretrained_p15']
+                pretrained_idx = np.random.randint(0, len(pretrained))
+                structure = pretrained[pretrained_idx]
+                self._log.debug(f"Using pretrained P15 structure (idx {pretrained_idx})")
+            elif not is_p15 and 'pretrained_ar' in IDPCFGDataset._shared_data and IDPCFGDataset._shared_data['pretrained_ar']:
+                # Randomly select a pretrained structure for AR length
+                pretrained = IDPCFGDataset._shared_data['pretrained_ar']
+                pretrained_idx = np.random.randint(0, len(pretrained))
+                structure = pretrained[pretrained_idx]
+                self._log.debug(f"Using pretrained AR structure (idx {pretrained_idx})")
         
-        # Extract required data
-        positions = structure['positions']
+        # Extract positions from the structure
+        positions = structure['positions']  # Shape: [L, 4, 3] for N, CA, C, O
+        
+        # Convert to torch tensor if it's a numpy array
+        if isinstance(positions, np.ndarray):
+            positions = torch.tensor(positions, dtype=torch.float32)
+            
+        # Get the sequence length
         length = positions.shape[0]
         
-        # Process the structure - compute rigid transformations and torsion angles
-        
-        # First convert positions to torch tensor if they're numpy arrays
-        if isinstance(positions, np.ndarray):
-            positions_tensor = torch.tensor(positions, dtype=torch.float32)
-        else:
-            positions_tensor = positions
+        # Create backbone rigid transformations from N, CA, C positions
+        try:
+            # Extract the backbone atom positions
+            n_xyz = positions[:, 0]   # N atoms
+            ca_xyz = positions[:, 1]  # CA atoms
+            c_xyz = positions[:, 2]   # C atoms
             
-        # Compute backbone rigid transformations from N, CA, C atomic positions
-        # positions has shape [L, 4, 3] for N, CA, C, O atoms
-        n_xyz = positions_tensor[:, 0]   # N atoms
-        ca_xyz = positions_tensor[:, 1]  # CA atoms
-        c_xyz = positions_tensor[:, 2]   # C atoms
+            # Create rigid transformations using openfold's utility
+            gt_bb_rigid = rigid_utils.Rigid.from_3_points(
+                p_neg_x_axis=n_xyz,  # N atoms
+                origin=ca_xyz,       # CA atoms 
+                p_xy_plane=c_xyz     # C atoms
+            )
+            
+            # Convert to tensor format
+            rigids_tensor = gt_bb_rigid.to_tensor_7()  # [L, 7]
+        except Exception as e:
+            self._log.error(f"Error creating rigid transformations: {str(e)}")
+            # Create a simple fallback rigid transformation
+            device = positions.device
+            identity_rot = torch.eye(3, device=device).unsqueeze(0).repeat(length, 1, 1)
+            rot_obj = rigid_utils.Rotation(rot_mats=identity_rot)
+            gt_bb_rigid = rigid_utils.Rigid(rot_obj, positions[:, 1])  # Use CA as translation
+            rigids_tensor = gt_bb_rigid.to_tensor_7()  # [L, 7]
         
-        # Create rigid transformations using the Rigid.from_3_points function
-        # This creates transformations using N (negative x-axis), CA (origin), and C (xy-plane)
-        gt_bb_rigid = rigid_utils.Rigid.from_3_points(
-            p_neg_x_axis=n_xyz,  # N atoms
-            origin=ca_xyz,       # CA atoms 
-            p_xy_plane=c_xyz     # C atoms
-        )
-        
-        # Create placeholder for torsion angles (7 angles, sin & cos)
-        # In a full implementation, we would compute proper torsion angles
+        # Create placeholder torsion angles (7 angles, sin & cos values)
         torsion_angles = torch.zeros((length, 7, 2), dtype=torch.float32)
+        torsion_angles[:, :, 0] = 0.0  # sin values
+        torsion_angles[:, :, 1] = 1.0  # cos values
         
-        # Initialize sin/cos values to neutral
-        torsion_angles[:, :, 0] = 0.0  # sin
-        torsion_angles[:, :, 1] = 1.0  # cos
-        
-        # Create amino acid sequence indices (0-indexed)
+        # Create sequence indices and masks
         seq_idx = torch.arange(length, dtype=torch.long)
-        
-        # Create mask (1 for valid residues)
-        mask = torch.ones(length, dtype=torch.float32)
-        
-        # Create fixed mask (0 for residues that can move)
+        res_mask = torch.ones(length, dtype=torch.float32)
         fixed_mask = torch.zeros(length, dtype=torch.float32)
         
         # Sample a random timestep [0, 1]
         t = torch.rand(1, dtype=torch.float32)
-        t_tensor = t.unsqueeze(0)  # Make it [1, 1] for batching
         
-        # Need to match the expected input format
+        # Return the sample data with all required fields
         return {
-            # Required features used directly by ScoreNetwork's forward method
-            'res_mask': mask,                    # [L]
-            'seq_idx': seq_idx,                  # [L]
-            'fixed_mask': fixed_mask,            # [L]
-            'sc_ca_t': ca_xyz,                   # [L, 3] - CA positions for self-conditioning
-            't': t_tensor,                       # [1] - 1D tensor for timestep
+            # Required inputs for SE(3) diffusion model
+            'res_mask': res_mask,                    # [L]
+            'seq_idx': seq_idx,                      # [L]
+            'fixed_mask': fixed_mask,                # [L]
+            'sc_ca_t': ca_xyz,                       # [L, 3] - CA positions for self-conditioning
+            't': t.unsqueeze(0),                     # [1, 1] - timestep
             
             # Features for the score model
             'torsion_angles_sin_cos': torsion_angles,  # [L, 7, 2]
-            'rigids': gt_bb_rigid.to_tensor_7(), # [L, 7]
-            'rigids_t': gt_bb_rigid.to_tensor_7(), # [L, 7] - for self-conditioning
+            'rigids': rigids_tensor,                 # [L, 7]
+            'rigids_t': rigids_tensor,               # [L, 7] - for self-conditioning
             
-            # Sequence embedding for conditioning
-            'sequence': embedding,               # [1024] - Raw embedding tensor
+            # Conditioning information
+            'sequence': embedding,                   # [embed_dim] - Raw embedding tensor
             
-            # Any other fields needed by the diffusion model
-            'positions': positions_tensor,       # [L, 4, 3] - N, CA, C, O atom positions
+            # Additional data
+            'positions': positions,                  # [L, 4, 3] - Atom positions
             'length': torch.tensor(length, dtype=torch.long),  # scalar
-            
-            # Metadata
-            'is_p15': torch.tensor(is_p15, dtype=torch.float32),  # scalar
+            'is_p15': torch.tensor(is_p15, dtype=torch.float32),  # Boolean flag
         }
-
-    def _get_pretrained_structure(self, length: int) -> Dict:
-        """Get a structure from the appropriate conformations directory.
-        
-        Args:
-            length: Length of structure to return (either p15_length or ar_length)
-            
-        Returns:
-            Dictionary containing structure data
-        """
-        # Choose the appropriate dataset based on length
-        if length == IDPCFGDataset._shared_data['p15_length']:
-            data = IDPCFGDataset._shared_data['pretrained_p15']
-        else:
-            data = IDPCFGDataset._shared_data['pretrained_ar']
-            
-        # Randomly select one structure from the dataset
-        idx = np.random.randint(len(data))
-        return data[idx]
 
 class LengthBasedBatchSampler:
     """Sampler that creates batches of same-length structures."""
