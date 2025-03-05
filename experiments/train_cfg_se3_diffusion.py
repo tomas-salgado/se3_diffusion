@@ -68,8 +68,8 @@ class CFGExperiment:
             ar_data_path=self._conf.data.ar_data_path,
             p15_embedding_path=self._conf.data.p15_embedding_path,
             ar_embedding_path=self._conf.data.ar_embedding_path,
-            pretrained_p15_path=self._conf.data.pretrained_p15_path,
-            pretrained_ar_path=self._conf.data.pretrained_ar_path,
+            pretrained_p15_path=self._conf.data.pretrained_p15_dir,
+            pretrained_ar_path=self._conf.data.pretrained_ar_dir,
             cfg_dropout_prob=0.0  # No dropout during validation
         )
         
