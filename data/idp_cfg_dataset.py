@@ -49,16 +49,19 @@ class IDPCFGDataset(Dataset):
         self.p15_length = len(self.p15_data[0]['positions'])
         self.ar_length = len(self.ar_data[0]['positions'])
 
-    def _load_single_embedding(self, path: str) -> torch.Tensor:
-        """Load a single embedding vector from a txt file.
-        
-        Expected format:
-        - Single line of space-separated floats
-        """
-        with open(path, 'r') as f:
-            # Read the single line and split into floats
-            values = [float(x) for x in f.readline().strip().split()]
-            return torch.tensor(values)
+    def _load_single_embedding(self, path):
+        """Load embedding from file."""
+        try:
+            with open(path, 'r') as f:
+                # Read the line and remove brackets
+                line = f.readline().strip()
+                line = line.strip('[]')
+                # Split by comma and convert to float
+                values = [float(x) for x in line.split(',')]
+            return torch.from_numpy(np.array(values)).float()
+        except Exception as e:
+            print(f"Error loading embedding from {path}: {e}")
+            return None
 
     def __len__(self):
         return len(self.p15_data) + len(self.ar_data)
