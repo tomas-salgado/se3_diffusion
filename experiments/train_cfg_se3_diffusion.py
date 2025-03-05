@@ -80,7 +80,8 @@ class CFGExperiment:
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
             batch_sampler=train_sampler,
-            num_workers=self._conf.experiment.num_loader_workers
+            num_workers=self._conf.experiment.num_loader_workers,
+            collate_fn=train_sampler.collate_fn  # Use custom collate function
         )
         
         # Similar for validation, but with smaller batch size and no dropping
@@ -105,7 +106,8 @@ class CFGExperiment:
         valid_loader = torch.utils.data.DataLoader(
             valid_dataset,
             batch_sampler=valid_sampler,
-            num_workers=self._conf.experiment.num_loader_workers
+            num_workers=self._conf.experiment.num_loader_workers,
+            collate_fn=valid_sampler.collate_fn  # Use custom collate function
         )
         
         self._log.info("Dataset creation complete")

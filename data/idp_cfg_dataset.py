@@ -195,17 +195,25 @@ class IDPCFGDataset(Dataset):
         t = torch.rand(1).item() if self._is_training else 1.0
         
         # Create timestep tensor with correct shape [1]
-        t_tensor = torch.tensor([t])  # This ensures 1D shape [1]
+        t_tensor = torch.tensor([t], dtype=torch.float32)  # This ensures 1D shape [1]
         
         # Debug logging for timestep
         self._log.debug(f"Timestep details:")
         self._log.debug(f"- t value: {t}")
         self._log.debug(f"- t_tensor shape: {t_tensor.shape}")
         self._log.debug(f"- t_tensor: {t_tensor}")
+        self._log.debug(f"- t_tensor dtype: {t_tensor.dtype}")
         
         # Expand sequence embedding to match residue dimension
         sequence_embedding = embedding.unsqueeze(0).expand(length, -1)  # [L, 1024]
         
+        # Create placeholder features instead of using ProteinFeatures
+        edge_features = torch.zeros(length, 128)  # Placeholder for edge features
+        pos_encoding = torch.zeros(length, 16)    # Placeholder for positional encoding
+        chain_embedding = torch.zeros(length, 16)  # Placeholder for chain embedding
+        orientation_features = torch.zeros(length, 7)  # Placeholder for orientation features
+        aatype_embedding = torch.zeros(length, 64)  # Placeholder for amino acid type embedding
+
         # Debug logging for tensor shapes
         self._log.debug(f"Tensor shapes:")
         self._log.debug(f"- seq_idx: {seq_idx.shape}")
@@ -216,6 +224,11 @@ class IDPCFGDataset(Dataset):
         self._log.debug(f"- gt_bb_rigid: {gt_bb_rigid.shape}")
         self._log.debug(f"- sequence_embedding: {sequence_embedding.shape}")
         self._log.debug(f"- t_tensor: {t_tensor.shape}")
+        self._log.debug(f"- edge_features: {edge_features.shape}")
+        self._log.debug(f"- pos_encoding: {pos_encoding.shape}")
+        self._log.debug(f"- chain_embedding: {chain_embedding.shape}")
+        self._log.debug(f"- orientation_features: {orientation_features.shape}")
+        self._log.debug(f"- aatype_embedding: {aatype_embedding.shape}")
         
         # Need to match the expected input format
         return {
@@ -244,6 +257,13 @@ class IDPCFGDataset(Dataset):
             'chain_idx': torch.zeros(length),    # [L] - chain indices (placeholder)
             'chain_mask': torch.ones(length),    # [L] - chain mask (placeholder)
             'chain_encoding_all': torch.zeros(length),  # [L] - chain encoding (placeholder)
+            
+            # New features for the model
+            'edge_features': edge_features,      # [L, 128] - Edge features
+            'pos_encoding': pos_encoding,        # [L, 16] - Positional encoding
+            'chain_embedding': chain_embedding,  # [L, 16] - Chain embedding
+            'orientation_features': orientation_features,  # [L, 7] - Orientation features
+            'aatype_embedding': aatype_embedding,  # [L, 64] - Amino acid type embedding
         }
 
     def _get_pretrained_structure(self, length: int) -> Dict:
@@ -295,6 +315,18 @@ class LengthBasedBatchSampler:
                 n_ar_batches += 1
                 
         self.n_batches = n_p15_batches + n_ar_batches
+
+    def collate_fn(self, batch):
+        """Custom collate function to handle timestep tensor correctly."""
+        # Stack all tensors except timestep
+        stacked = {}
+        for key in batch[0].keys():
+            if key == 't':
+                # For timestep, we want to keep it as a 1D tensor
+                stacked[key] = torch.stack([item[key] for item in batch]).squeeze(-1)
+            else:
+                stacked[key] = torch.stack([item[key] for item in batch])
+        return stacked
     
     def __iter__(self):
         # Shuffle indices for each length
