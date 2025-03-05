@@ -14,6 +14,7 @@ class IDPCFGDataset(Dataset):
         pretrained_p15_path: Optional[str] = None,  # Path to pretrained p15-length structures
         pretrained_ar_path: Optional[str] = None,   # Path to pretrained ar-length structures
         cfg_dropout_prob: float = 0.1,
+        is_training: bool = True,  # Whether this is for training or validation
     ):
         """Dataset for classifier-free guidance training with IDP data.
         
@@ -25,6 +26,7 @@ class IDPCFGDataset(Dataset):
             pretrained_p15_path: Path to pretrained structures matching p15 length
             pretrained_ar_path: Path to pretrained structures matching ar length
             cfg_dropout_prob: Probability of dropping condition during training
+            is_training: Whether this dataset is for training or validation
         """
         super().__init__()
         
@@ -44,6 +46,7 @@ class IDPCFGDataset(Dataset):
         
         # Store parameters
         self.cfg_dropout_prob = cfg_dropout_prob
+        self._is_training = is_training
         
         # Store lengths for convenience
         self.p15_length = len(self.p15_data[0]['positions'])
@@ -79,7 +82,7 @@ class IDPCFGDataset(Dataset):
             embedding = self.ar_embedding  # Use the single AR embedding
 
         # Apply CFG dropout during training
-        if self.training and torch.rand(1) < self.cfg_dropout_prob:
+        if self._is_training and torch.rand(1) < self.cfg_dropout_prob:
             # For unconditioned samples, zero out the embedding
             embedding = torch.zeros_like(embedding)
             

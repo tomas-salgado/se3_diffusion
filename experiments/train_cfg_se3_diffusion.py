@@ -45,7 +45,8 @@ class CFGExperiment:
             # Embeddings for conditioning
             p15_embedding_path=self._conf.data.p15_embedding_path,
             ar_embedding_path=self._conf.data.ar_embedding_path,
-            cfg_dropout_prob=self._conf.model.cfg_dropout_prob
+            cfg_dropout_prob=self._conf.model.cfg_dropout_prob,
+            is_training=True  # Training dataset
         )
         
         # Create batch sampler
@@ -70,7 +71,8 @@ class CFGExperiment:
             ar_embedding_path=self._conf.data.ar_embedding_path,
             pretrained_p15_path=self._conf.data.pretrained_p15_dir,
             pretrained_ar_path=self._conf.data.pretrained_ar_dir,
-            cfg_dropout_prob=0.0  # No dropout during validation
+            cfg_dropout_prob=0.0,  # No dropout during validation
+            is_training=False  # Validation dataset
         )
         
         valid_sampler = LengthBasedBatchSampler(
