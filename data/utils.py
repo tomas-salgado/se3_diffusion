@@ -651,7 +651,8 @@ def load_ensemble_structure(pdb_path, chain_id=None):
                 
             backbone = {}
             for atom in res:
-                if atom.get_name() in ["N", "CA", "C", "O"] and atom.is_backbone():
+                # Simply check if atom name is in backbone atoms
+                if atom.get_name() in ["N", "CA", "C", "O"]:
                     backbone[atom.get_name()] = atom.get_coord()
                     
             if len(backbone) == 4:  # N, CA, C, O
@@ -707,7 +708,8 @@ def load_structure_dir(dir_path, chain_id=None):
                 
             backbone = {}
             for atom in res:
-                if atom.get_name() in ["N", "CA", "C", "O"] and atom.is_backbone():
+                # Simply check if atom name is in backbone atoms
+                if atom.get_name() in ["N", "CA", "C", "O"]:
                     backbone[atom.get_name()] = atom.get_coord()
                     
             if len(backbone) == 4:
