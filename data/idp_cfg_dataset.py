@@ -194,6 +194,9 @@ class IDPCFGDataset(Dataset):
         # Sample time uniformly between 0 and 1 for training
         t = torch.rand(1).item() if self._is_training else 1.0
         
+        # Expand sequence embedding to match residue dimension
+        sequence_embedding = embedding.unsqueeze(0).expand(length, -1)  # [L, 1024]
+        
         # Debug logging for tensor shapes
         self._log.debug(f"Tensor shapes:")
         self._log.debug(f"- seq_idx: {seq_idx.shape}")
@@ -202,7 +205,7 @@ class IDPCFGDataset(Dataset):
         self._log.debug(f"- positions: {positions.shape}")
         self._log.debug(f"- torsion_angles: {torsion_angles.shape}")
         self._log.debug(f"- gt_bb_rigid: {gt_bb_rigid.shape}")
-        self._log.debug(f"- embedding: {embedding.shape}")
+        self._log.debug(f"- sequence_embedding: {sequence_embedding.shape}")
         self._log.debug(f"- t: {t}")
         
         # Need to match the expected input format
@@ -217,15 +220,21 @@ class IDPCFGDataset(Dataset):
             'rigids_t': gt_bb_rigid.to_tensor_7(), # [L, 7] - for self-conditioning
             
             # Additional fields for CFG
-            'sequence_embedding': embedding,      # [1024]
+            'sequence_embedding': sequence_embedding,  # [L, 1024] - expanded to match residue dimension
             'is_p15': torch.tensor(is_p15),      # scalar
             
             # Time information for diffusion
-            't': t,                              # scalar
+            't': torch.tensor([t]),              # [1] - needs to be a tensor for the model
             
             # Any other fields needed by the diffusion model
             'positions': positions,               # [L, 3]
-            'length': length                     # scalar
+            'length': length,                    # scalar
+            
+            # Additional fields that might be needed
+            'aatype': torch.zeros(length),       # [L] - amino acid types (placeholder)
+            'chain_idx': torch.zeros(length),    # [L] - chain indices (placeholder)
+            'chain_mask': torch.ones(length),    # [L] - chain mask (placeholder)
+            'chain_encoding_all': torch.zeros(length),  # [L] - chain encoding (placeholder)
         }
 
     def _get_pretrained_structure(self, length: int) -> Dict:
