@@ -31,22 +31,30 @@ class IDPCFGDataset(Dataset):
         cfg_dropout_prob: float = 0.1,
         is_training: bool = True,  # Whether this is for training or validation
     ):
-        """Dataset for classifier-free guidance training with IDP data.
+        """Initialize the dataset.
         
         Args:
-            p15_data_path: Path to p15 conformation data
-            ar_data_path: Path to AR conformation data
-            p15_embedding_path: Path to single p15 embedding txt file
-            ar_embedding_path: Path to single AR embedding txt file
-            pretrained_p15_path: Path to pretrained structures matching p15 length
-            pretrained_ar_path: Path to pretrained structures matching ar length
-            cfg_dropout_prob: Probability of dropping condition during training
-            is_training: Whether this dataset is for training or validation
+            p15_data_path: Path to p15 conformations
+            ar_data_path: Path to AR conformations
+            p15_embedding_path: Path to p15 embedding txt file
+            ar_embedding_path: Path to AR embedding txt file
+            pretrained_p15_path: Path to pretrained p15-length structures
+            pretrained_ar_path: Path to pretrained ar-length structures
+            cfg_dropout_prob: Probability of dropping embeddings during training
+            is_training: Whether this is for training or validation
         """
+        # Call parent init
         super().__init__()
-        self._log = logging.getLogger(__name__)
         
+        # Initialize logger
+        self._log = logging.getLogger(self.__class__.__name__)
         self._log.info(f"Initializing {'training' if is_training else 'validation'} dataset...")
+        
+        # Set parameters early to avoid AttributeError
+        self.p15_embedding_path = p15_embedding_path
+        self.ar_embedding_path = ar_embedding_path
+        self.cfg_dropout_prob = cfg_dropout_prob
+        self._is_training = is_training
         
         # Validate input paths
         self._log.info("Validating input paths...")
@@ -91,8 +99,8 @@ class IDPCFGDataset(Dataset):
             
             # Load embeddings
             self._log.info("Loading sequence embeddings...")
-            IDPCFGDataset._shared_data['p15_embedding'] = self._load_single_embedding(p15_embedding_path)
-            IDPCFGDataset._shared_data['ar_embedding'] = self._load_single_embedding(ar_embedding_path)
+            IDPCFGDataset._shared_data['p15_embedding'] = self._load_single_embedding(p15_embedding_path, is_p15=True)
+            IDPCFGDataset._shared_data['ar_embedding'] = self._load_single_embedding(ar_embedding_path, is_p15=False)
             
             # Validate embeddings
             if IDPCFGDataset._shared_data['p15_embedding'] is None:
@@ -118,9 +126,11 @@ class IDPCFGDataset(Dataset):
             if pretrained_ar_path:
                 self._log.info(f"- Pretrained AR structures: {len(IDPCFGDataset._shared_data['pretrained_ar'])}")
         
-        # Store parameters
-        self.cfg_dropout_prob = cfg_dropout_prob
-        self._is_training = is_training
+        # Store paths for later use
+        self.p15_data_path = p15_data_path
+        self.ar_data_path = ar_data_path
+        self.pretrained_p15_path = pretrained_p15_path
+        self.pretrained_ar_path = pretrained_ar_path
 
     def _load_single_embedding(self, path, is_p15=True):
         """Load a single embedding from a file and apply CFG dropout during training.
@@ -153,14 +163,10 @@ class IDPCFGDataset(Dataset):
                 IDPCFGDataset._shared_data['ar_embedding'] = embedding
                 
         # During training, apply CFG dropout randomly
-        if self._is_training and torch.rand(1) < self.cfg_dropout_prob:
-            # If dropout, use pretrained structure and zero embedding
-            if is_p15:
-                self._get_pretrained_structure(IDPCFGDataset._shared_data['p15_length'])
-            else:
-                self._get_pretrained_structure(IDPCFGDataset._shared_data['ar_length'])
-                
-            # Zero out embedding for unconditioned samples
+        # Note: This part should only be used in __getitem__, not during initialization
+        # since we need valid embeddings during init
+        if hasattr(self, '_is_training') and self._is_training and torch.rand(1) < self.cfg_dropout_prob:
+            # Return zero embedding for unconditioned samples
             return torch.zeros_like(embedding)
         
         return embedding
@@ -181,12 +187,31 @@ class IDPCFGDataset(Dataset):
         if idx < len(IDPCFGDataset._shared_data['p15_data']):
             is_p15 = True
             structure = IDPCFGDataset._shared_data['p15_data'][idx]
-            embedding = self._load_single_embedding(self.p15_embedding_path)
+            embedding = self._load_single_embedding(self.p15_embedding_path, is_p15=True)
         else:
             is_p15 = False
             adjusted_idx = idx - len(IDPCFGDataset._shared_data['p15_data'])
             structure = IDPCFGDataset._shared_data['ar_data'][adjusted_idx]
-            embedding = self._load_single_embedding(self.ar_embedding_path)
+            embedding = self._load_single_embedding(self.ar_embedding_path, is_p15=False)
+        
+        # Apply CFG dropout during training - use pretrained structure if dropout is applied
+        use_pretrained = False
+        if self._is_training and torch.rand(1) < self.cfg_dropout_prob:
+            self._log.debug("Applying CFG dropout")
+            # Zero out the embedding
+            embedding = torch.zeros_like(embedding)
+            
+            # Use pretrained structures
+            use_pretrained = True
+            
+        # Get pretrained structure if needed
+        if use_pretrained:
+            if is_p15:
+                self._log.debug("Using pretrained P15 structure")
+                structure = self._get_pretrained_structure(IDPCFGDataset._shared_data['p15_length'])
+            else:
+                self._log.debug("Using pretrained AR structure")
+                structure = self._get_pretrained_structure(IDPCFGDataset._shared_data['ar_length'])
         
         # Extract required data
         positions = structure['positions']
