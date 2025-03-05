@@ -312,6 +312,9 @@ class LengthBasedBatchSampler:
             if key == 't':
                 # For timestep, we want to keep it as a 1D tensor
                 stacked[key] = torch.stack([item[key] for item in batch]).squeeze(-1)
+            elif key == 'sequence':
+                # For sequence, we need to create a list of tensors
+                stacked[key] = [item[key][0] for item in batch]  # Extract each tensor from its list
             elif isinstance(batch[0][key], torch.Tensor):
                 # Stack tensor values
                 stacked[key] = torch.stack([item[key] for item in batch])
