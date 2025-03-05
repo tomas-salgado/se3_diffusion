@@ -245,8 +245,8 @@ class LengthBasedBatchSampler:
         self.drop_last = drop_last
         
         # Group indices by structure length
-        self.p15_indices = list(range(len(dataset.p15_data)))
-        self.ar_indices = list(range(len(dataset.p15_data), len(dataset)))
+        self.p15_indices = list(range(len(IDPCFGDataset._shared_data['p15_data'])))
+        self.ar_indices = list(range(len(IDPCFGDataset._shared_data['p15_data']), len(dataset)))
         
         # Calculate number of batches
         n_p15_batches = len(self.p15_indices) // batch_size
