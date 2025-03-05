@@ -16,6 +16,13 @@ from openfold.utils import rigid_utils
 import warnings
 from data.idp_cfg_dataset import IDPCFGDataset, LengthBasedBatchSampler
 
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 class CFGExperiment:
     """Extends base Experiment class for CFG training."""
     
@@ -23,7 +30,7 @@ class CFGExperiment:
         # Disable wandb if no API key is available
         if 'WANDB_API_KEY' not in os.environ:
             conf.experiment.use_wandb = False
-            logging.info("Wandb disabled - no API key found")
+            logger.info("Wandb disabled - no API key found")
         
         self.exp = train_se3_diffusion.Experiment(conf=conf)
         self._conf = conf
@@ -31,10 +38,21 @@ class CFGExperiment:
         
         # Override the dataset creation method
         self.exp.create_dataset = self.create_dataset
+        
+        # Log configuration
+        self._log.info("Training configuration:")
+        self._log.info(f"- Batch size: {conf.experiment.batch_size}")
+        self._log.info(f"- Number of workers: {conf.experiment.num_loader_workers}")
+        self._log.info(f"- CFG dropout probability: {conf.model.cfg_dropout_prob}")
+        self._log.info(f"- Using sequence conditioning: {conf.model.use_sequence_conditioning}")
+        self._log.info(f"- Conditioning method: {conf.model.conditioning_method}")
     
     def create_dataset(self):
         """Create datasets for CFG training."""
+        self._log.info("Creating datasets...")
+        
         # Create dataset with both real structures and pretrained structures
+        self._log.info("Initializing training dataset...")
         train_dataset = IDPCFGDataset(
             # Real protein structures
             p15_data_path=self._conf.data.p15_data_path,
@@ -50,6 +68,7 @@ class CFGExperiment:
         )
         
         # Create batch sampler
+        self._log.info("Creating batch sampler...")
         train_sampler = LengthBasedBatchSampler(
             dataset=train_dataset,
             batch_size=self._conf.experiment.batch_size,
@@ -57,6 +76,7 @@ class CFGExperiment:
         )
         
         # Create data loader with custom sampler
+        self._log.info("Creating data loader...")
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
             batch_sampler=train_sampler,
@@ -64,6 +84,7 @@ class CFGExperiment:
         )
         
         # Similar for validation, but with smaller batch size and no dropping
+        self._log.info("Initializing validation dataset...")
         valid_dataset = IDPCFGDataset(
             p15_data_path=self._conf.data.p15_data_path,
             ar_data_path=self._conf.data.ar_data_path,
@@ -87,10 +108,12 @@ class CFGExperiment:
             num_workers=self._conf.experiment.num_loader_workers
         )
         
+        self._log.info("Dataset creation complete")
         return train_loader, valid_loader, None, None
 
     def train(self):
         """Delegate to base experiment's train method"""
+        self._log.info("Starting training...")
         return self.exp.start_training()
 
     def train_step(self, batch):
@@ -215,8 +238,8 @@ class CombinedIDPDataset(torch.utils.data.Dataset):
 def main(conf: DictConfig) -> None:
     """Main training function."""
     # Add some debug prints
-    print(f"Config type: {type(conf)}")
-    print(f"Config contents: {conf}")
+    logger.info(f"Config type: {type(conf)}")
+    logger.info(f"Config contents: {conf}")
     experiment = CFGExperiment(conf)
     experiment.train()
 
