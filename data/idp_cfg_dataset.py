@@ -122,113 +122,90 @@ class IDPCFGDataset(Dataset):
         self.cfg_dropout_prob = cfg_dropout_prob
         self._is_training = is_training
 
-    def _load_single_embedding(self, path):
-        """Load embedding from file."""
-        try:
+    def _load_single_embedding(self, path, is_p15=True):
+        """Load a single embedding from a file and apply CFG dropout during training.
+        
+        Args:
+            path: Path to the embedding file
+            is_p15: Whether this is a P15 embedding or not
+            
+        Returns:
+            Embedding tensor with shape [embed_dim]
+        """
+        # Use shared embeddings if already loaded
+        if is_p15 and 'p15_embedding' in IDPCFGDataset._shared_data:
+            embedding = IDPCFGDataset._shared_data['p15_embedding']
+        elif not is_p15 and 'ar_embedding' in IDPCFGDataset._shared_data:
+            embedding = IDPCFGDataset._shared_data['ar_embedding']
+        else:
+            # Load embedding from file
             with open(path, 'r') as f:
-                # Read the line and remove brackets
-                line = f.readline().strip()
-                line = line.strip('[]')
-                # Split by comma and convert to float
-                values = [float(x) for x in line.split(',')]
-            return torch.from_numpy(np.array(values)).float()
-        except Exception as e:
-            print(f"Error loading embedding from {path}: {e}")
-            return None
+                embedding_str = f.read().strip()
+                embedding_values = [float(x) for x in embedding_str.split(',')]
+                
+            # Convert to tensor
+            embedding = torch.tensor(embedding_values, dtype=torch.float32)
+            
+            # Cache in shared data
+            if is_p15:
+                IDPCFGDataset._shared_data['p15_embedding'] = embedding
+            else:
+                IDPCFGDataset._shared_data['ar_embedding'] = embedding
+                
+        # During training, apply CFG dropout randomly
+        if self._is_training and torch.rand(1) < self.cfg_dropout_prob:
+            # If dropout, use pretrained structure and zero embedding
+            if is_p15:
+                self._get_pretrained_structure(IDPCFGDataset._shared_data['p15_length'])
+            else:
+                self._get_pretrained_structure(IDPCFGDataset._shared_data['ar_length'])
+                
+            # Zero out embedding for unconditioned samples
+            return torch.zeros_like(embedding)
+        
+        return embedding
 
     def __len__(self):
         return len(IDPCFGDataset._shared_data['p15_data']) + len(IDPCFGDataset._shared_data['ar_data'])
 
     def __getitem__(self, idx):
-        # Determine if this sample is from p15 or AR dataset
-        is_p15 = idx < len(IDPCFGDataset._shared_data['p15_data'])
+        """Get a single sample from the dataset.
         
-        if is_p15:
-            data = IDPCFGDataset._shared_data['p15_data'][idx]
-            embedding = IDPCFGDataset._shared_data['p15_embedding']  # Use the single p15 embedding
-            length = IDPCFGDataset._shared_data['p15_length']
-            self._log.debug(f"Loading P15 structure {idx}")
-        else:
-            adj_idx = idx - len(IDPCFGDataset._shared_data['p15_data'])
-            data = IDPCFGDataset._shared_data['ar_data'][adj_idx]
-            embedding = IDPCFGDataset._shared_data['ar_embedding']  # Use the single AR embedding
-            length = IDPCFGDataset._shared_data['ar_length']
-            self._log.debug(f"Loading AR structure {adj_idx}")
-
-        # Apply CFG dropout during training
-        if self._is_training and torch.rand(1) < self.cfg_dropout_prob:
-            self._log.debug("Applying CFG dropout")
-            # For unconditioned samples, zero out the embedding
-            embedding = torch.zeros_like(embedding)
+        Args:
+            idx: Index of the sample to get
             
-            # Use pretrained-generated structures matching the length
-            if is_p15:
-                data = self._get_pretrained_structure(IDPCFGDataset._shared_data['p15_length'])
-                self._log.debug("Using pretrained P15 structure")
-            else:
-                data = self._get_pretrained_structure(IDPCFGDataset._shared_data['ar_length'])
-                self._log.debug("Using pretrained AR structure")
-
-        # Convert positions to tensor
-        positions = torch.from_numpy(data['positions']).float()
+        Returns:
+            Dictionary containing the sample data
+        """
+        # Determine which dataset to use based on the index
+        if idx < len(IDPCFGDataset._shared_data['p15_data']):
+            is_p15 = True
+            structure = IDPCFGDataset._shared_data['p15_data'][idx]
+            embedding = self._load_single_embedding(self.p15_embedding_path)
+        else:
+            is_p15 = False
+            adjusted_idx = idx - len(IDPCFGDataset._shared_data['p15_data'])
+            structure = IDPCFGDataset._shared_data['ar_data'][adjusted_idx]
+            embedding = self._load_single_embedding(self.ar_embedding_path)
         
-        # Create mask (1 for residues with all backbone atoms)
-        mask = torch.ones(length)
+        # Extract required data
+        positions = structure['positions']
+        length = positions.shape[0]
+        gt_bb_rigid = structure['rigids']
+        torsion_angles = structure['torsion_angles']
         
-        # Create sequence indices (1-based)
-        seq_idx = torch.arange(1, length + 1)
+        # Create amino acid sequence indices (0-indexed)
+        seq_idx = torch.arange(length, dtype=torch.long)
         
-        # Create fixed mask (all zeros for now)
-        fixed_mask = torch.zeros(length)
+        # Create mask (1 for valid residues)
+        mask = torch.ones(length, dtype=torch.float32)
         
-        # Calculate rigid body transforms from backbone atoms
-        gt_bb_rigid = rigid_utils.Rigid.from_3_points(
-            positions[:, 0],  # N
-            positions[:, 1],  # CA
-            positions[:, 2],  # C
-        )
+        # Create fixed mask (0 for residues that can move)
+        fixed_mask = torch.zeros(length, dtype=torch.float32)
         
-        # Calculate torsion angles (placeholder for now)
-        torsion_angles = torch.zeros(length, 7, 2)  # 7 torsion angles, sin/cos for each
-        
-        # Sample time uniformly between 0 and 1 for training
-        t = torch.rand(1).item() if self._is_training else 1.0
-        
-        # Create timestep tensor with correct shape [1]
-        t_tensor = torch.tensor([t], dtype=torch.float32)  # This ensures 1D shape [1]
-        
-        # Debug logging for timestep
-        self._log.debug(f"Timestep details:")
-        self._log.debug(f"- t value: {t}")
-        self._log.debug(f"- t_tensor shape: {t_tensor.shape}")
-        self._log.debug(f"- t_tensor: {t_tensor}")
-        self._log.debug(f"- t_tensor dtype: {t_tensor.dtype}")
-        
-        # Expand sequence embedding to match residue dimension
-        sequence_embedding = embedding.unsqueeze(0).expand(length, -1)  # [L, 1024]
-        
-        # Create placeholder features instead of using ProteinFeatures
-        edge_features = torch.zeros(length, 128)  # Placeholder for edge features
-        pos_encoding = torch.zeros(length, 16)    # Placeholder for positional encoding
-        chain_embedding = torch.zeros(length, 16)  # Placeholder for chain embedding
-        orientation_features = torch.zeros(length, 7)  # Placeholder for orientation features
-        aatype_embedding = torch.zeros(length, 64)  # Placeholder for amino acid type embedding
-
-        # Debug logging for tensor shapes
-        self._log.debug(f"Tensor shapes:")
-        self._log.debug(f"- seq_idx: {seq_idx.shape}")
-        self._log.debug(f"- mask: {mask.shape}")
-        self._log.debug(f"- fixed_mask: {fixed_mask.shape}")
-        self._log.debug(f"- positions: {positions.shape}")
-        self._log.debug(f"- torsion_angles: {torsion_angles.shape}")
-        self._log.debug(f"- gt_bb_rigid: {gt_bb_rigid.shape}")
-        self._log.debug(f"- sequence_embedding: {sequence_embedding.shape}")
-        self._log.debug(f"- t_tensor: {t_tensor.shape}")
-        self._log.debug(f"- edge_features: {edge_features.shape}")
-        self._log.debug(f"- pos_encoding: {pos_encoding.shape}")
-        self._log.debug(f"- chain_embedding: {chain_embedding.shape}")
-        self._log.debug(f"- orientation_features: {orientation_features.shape}")
-        self._log.debug(f"- aatype_embedding: {aatype_embedding.shape}")
+        # Sample a random timestep [0, 1]
+        t = torch.rand(1, dtype=torch.float32)
+        t_tensor = t.unsqueeze(0)  # Make it [1, 1] for batching
         
         # Need to match the expected input format
         return {
@@ -244,8 +221,8 @@ class IDPCFGDataset(Dataset):
             'rigids': gt_bb_rigid.to_tensor_7(), # [L, 7]
             'rigids_t': gt_bb_rigid.to_tensor_7(), # [L, 7] - for self-conditioning
             
-            # Sequence embedding for conditioning - use sequences list format
-            'sequence': [embedding],             # List containing the raw embedding
+            # Sequence embedding for conditioning
+            'sequence': embedding,               # [1024] - Raw embedding tensor
             
             # Any other fields needed by the diffusion model
             'positions': positions,              # [L, 3, 3] - N, CA, C atom positions
@@ -306,22 +283,38 @@ class LengthBasedBatchSampler:
         self.n_batches = n_p15_batches + n_ar_batches
 
     def collate_fn(self, batch):
-        """Custom collate function to handle both tensor and non-tensor values."""
-        stacked = {}
+        """Custom collate function for our dataset.
+        
+        This function handles the special case of sequence embeddings and timesteps.
+        For sequence embeddings, we stack them into a batch tensor.
+        For timesteps, we ensure they remain 1D after stacking.
+        """
+        result = {}
+        
+        # Process each key in the first sample
         for key in batch[0].keys():
+            # Get all values for this key from all samples
+            values = [sample[key] for sample in batch]
+            
+            # Special handling for timestep tensor
             if key == 't':
-                # For timestep, we want to keep it as a 1D tensor
-                stacked[key] = torch.stack([item[key] for item in batch]).squeeze(-1)
+                # Stack timesteps and ensure 1D shape [B]
+                result[key] = torch.stack(values).squeeze(-1)
+            
+            # Special handling for sequence embedding
             elif key == 'sequence':
-                # For sequence, we need to create a list of tensors
-                stacked[key] = [item[key][0] for item in batch]  # Extract each tensor from its list
-            elif isinstance(batch[0][key], torch.Tensor):
-                # Stack tensor values
-                stacked[key] = torch.stack([item[key] for item in batch])
+                # Stack sequence embeddings into [B, D] tensor
+                result[key] = torch.stack(values)
+            
+            # Handle other tensors
+            elif isinstance(values[0], torch.Tensor):
+                result[key] = torch.stack(values, dim=0)
+            
+            # Handle lists, strings, etc.
             else:
-                # For non-tensor values (like length), just take the first value
-                stacked[key] = batch[0][key]
-        return stacked
+                result[key] = values
+            
+        return result
     
     def __iter__(self):
         # Shuffle indices for each length

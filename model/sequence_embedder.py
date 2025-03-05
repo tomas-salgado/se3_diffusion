@@ -49,12 +49,26 @@ class SequenceEmbedder(nn.Module):
             print(f"Error loading embedding from {path}: {e}")
             return torch.zeros(self.embed_dim, dtype=torch.float32)
     
-    def forward(self, sequences: list, device: torch.device) -> torch.Tensor:
-        """Get embedding for a batch of sequences and project them."""
-        batch_size = len(sequences)
+    def forward(self, sequences, device: torch.device) -> torch.Tensor:
+        """Get embedding for a batch of sequences and project them.
         
-        # Expand single embedding to batch size
-        embeddings = self.embedding.unsqueeze(0).expand(batch_size, -1).to(device)
+        Args:
+            sequences: Either a list of embeddings or a tensor of shape [batch_size, embed_dim]
+            device: The device to place tensors on
+            
+        Returns:
+            torch.Tensor: Projected embeddings of shape [batch_size, node_embed_size]
+        """
+        # Handle both list input and tensor input
+        if isinstance(sequences, list):
+            batch_size = len(sequences)
+            # Expand single embedding to batch size
+            embeddings = self.embedding.unsqueeze(0).expand(batch_size, -1).to(device)
+        else:
+            # If we received a tensor, use it directly
+            embeddings = sequences.to(device)
+            
+        # Project embeddings to the desired dimension
+        projected_embeddings = self.projection(embeddings)
         
-        # Return raw embeddings without projection - this matches what Embedder expects
-        return embeddings
+        return projected_embeddings
