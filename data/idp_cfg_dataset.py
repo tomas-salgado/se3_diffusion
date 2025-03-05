@@ -143,24 +143,48 @@ class IDPCFGDataset(Dataset):
             Embedding tensor with shape [embed_dim]
         """
         # Use shared embeddings if already loaded
-        if is_p15 and 'p15_embedding' in IDPCFGDataset._shared_data:
+        if is_p15 and 'p15_embedding' in IDPCFGDataset._shared_data and IDPCFGDataset._shared_data['p15_embedding'] is not None:
             embedding = IDPCFGDataset._shared_data['p15_embedding']
-        elif not is_p15 and 'ar_embedding' in IDPCFGDataset._shared_data:
+        elif not is_p15 and 'ar_embedding' in IDPCFGDataset._shared_data and IDPCFGDataset._shared_data['ar_embedding'] is not None:
             embedding = IDPCFGDataset._shared_data['ar_embedding']
         else:
-            # Load embedding from file
-            with open(path, 'r') as f:
-                embedding_str = f.read().strip()
-                embedding_values = [float(x) for x in embedding_str.split(',')]
+            try:
+                # Load embedding from file
+                with open(path, 'r') as f:
+                    embedding_str = f.read().strip()
                 
-            # Convert to tensor
-            embedding = torch.tensor(embedding_values, dtype=torch.float32)
-            
-            # Cache in shared data
-            if is_p15:
-                IDPCFGDataset._shared_data['p15_embedding'] = embedding
-            else:
-                IDPCFGDataset._shared_data['ar_embedding'] = embedding
+                # Process the string to handle brackets and newlines
+                embedding_str = embedding_str.replace('\n', '').replace(' ', '')
+                if embedding_str.startswith('[') and embedding_str.endswith(']'):
+                    embedding_str = embedding_str[1:-1]
+                
+                # Split by commas and convert to float
+                embedding_values = []
+                for val in embedding_str.split(','):
+                    if val.strip():  # Skip empty strings
+                        try:
+                            embedding_values.append(float(val.strip()))
+                        except ValueError as e:
+                            self._log.error(f"Error parsing value '{val}': {str(e)}")
+                            raise ValueError(f"Could not parse embedding value '{val}'")
+                
+                if not embedding_values:
+                    raise ValueError("No valid embedding values found in file")
+                
+                # Convert to tensor
+                embedding = torch.tensor(embedding_values, dtype=torch.float32)
+                
+                # Log success and dimensions
+                self._log.info(f"Successfully loaded embedding from {path} with shape {embedding.shape}")
+                
+                # Cache in shared data
+                if is_p15:
+                    IDPCFGDataset._shared_data['p15_embedding'] = embedding
+                else:
+                    IDPCFGDataset._shared_data['ar_embedding'] = embedding
+            except Exception as e:
+                self._log.error(f"Failed to load embedding from {path}: {str(e)}")
+                return None
                 
         # During training, apply CFG dropout randomly
         # Note: This part should only be used in __getitem__, not during initialization
