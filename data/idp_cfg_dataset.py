@@ -119,7 +119,15 @@ class IDPCFGDataset(Dataset):
                 
                 # Validate embedding dimensions match (should be the same size for both P15 and AR)
                 if IDPCFGDataset._shared_data['p15_embedding'].shape != IDPCFGDataset._shared_data['ar_embedding'].shape:
-                    self._log.warning(f"Embedding dimensions don't match: P15 {IDPCFGDataset._shared_data['p15_embedding'].shape} vs AR {IDPCFGDataset._shared_data['ar_embedding'].shape}")
+                    p15_shape = IDPCFGDataset._shared_data['p15_embedding'].shape
+                    ar_shape = IDPCFGDataset._shared_data['ar_embedding'].shape
+                    self._log.warning(f"Embedding dimensions don't match: P15 {p15_shape} vs AR {ar_shape}")
+                    self._log.warning("This is OK if using the dimension adapter in the sequence embedder")
+                    
+                # Store the embedding dimensions for reference
+                self.embedding_dim = IDPCFGDataset._shared_data['p15_embedding'].shape[0]
+                self._log.info(f"Using embedding dimension: {self.embedding_dim}")
+                
             except Exception as e:
                 self._log.error(f"Error loading embeddings: {str(e)}")
                 raise
@@ -158,7 +166,10 @@ class IDPCFGDataset(Dataset):
                 embedding_values = []
                 for val in embedding_str.split(','):
                     if val.strip():  # Skip empty strings
-                        embedding_values.append(float(val.strip()))
+                        try:
+                            embedding_values.append(float(val.strip()))
+                        except ValueError as e:
+                            self._log.warning(f"Skipping invalid value in embedding: {val}: {str(e)}")
                 
                 if not embedding_values:
                     raise ValueError("No valid embedding values found in file")
@@ -166,8 +177,9 @@ class IDPCFGDataset(Dataset):
                 # Convert to tensor
                 embedding = torch.tensor(embedding_values, dtype=torch.float32)
                 
-                # Log success
+                # Log success and dimensions
                 self._log.info(f"Successfully loaded embedding from {path} with shape {embedding.shape}")
+                self._log.debug(f"Embedding range: min={embedding.min().item():.4f}, max={embedding.max().item():.4f}, mean={embedding.mean().item():.4f}")
                 
                 # Store in shared data to avoid reloading
                 if is_p15:
@@ -178,8 +190,9 @@ class IDPCFGDataset(Dataset):
                 return embedding
                 
         except Exception as e:
-            self._log.error(f"Failed to load embedding from {path}: {str(e)}")
-            raise ValueError(f"Failed to load embedding from: {path}")
+            self._log.error(f"Error loading embedding from {path}: {str(e)}")
+            # Rethrow with more context
+            raise ValueError(f"Failed to load embedding from {path}: {str(e)}") from e
 
     def __len__(self):
         return len(IDPCFGDataset._shared_data['p15_data']) + len(IDPCFGDataset._shared_data['ar_data'])
