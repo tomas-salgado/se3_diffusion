@@ -34,14 +34,17 @@ class CFGExperiment:
     
     def create_dataset(self):
         """Create datasets for CFG training."""
-        # Create dataset
+        # Create dataset with both real structures and pretrained structures
         train_dataset = IDPCFGDataset(
+            # Real protein structures
             p15_data_path=self._conf.data.p15_data_path,
             ar_data_path=self._conf.data.ar_data_path,
-            p15_embedding_path=self._conf.data.p15_embedding_path,
-            ar_embedding_path=self._conf.data.ar_embedding_path,
-            pretrained_p15_path=self._conf.data.pretrained_p15_path,
-            pretrained_ar_path=self._conf.data.pretrained_ar_path,
+            # Pretrained inference structures
+            pretrained_p15_path=self._conf.data.pretrained_p15_dir,
+            pretrained_ar_path=self._conf.data.pretrained_ar_dir,
+            # Embeddings for conditioning
+            p15_embedding_path=self._conf.model.sequence_embed.p15_embedding_path,
+            ar_embedding_path=self._conf.model.sequence_embed.ar_embedding_path,
             cfg_dropout_prob=self._conf.model.cfg_dropout_prob
         )
         

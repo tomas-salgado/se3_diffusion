@@ -10,9 +10,11 @@ model:
     embed_dim: 1280
 
 data:
-  p15_data_path: conformations/p15
-  ar_data_path: conformations/ar
-  pretrained_structures_path: data/pretrained_outputs/
+  p15_data_path: "data/p15_ensemble.pdb"
+  ar_data_path: "data/ar_ensemble.pdb"
+  pretrained_structures_dir: "pretrained_structures"
+  pretrained_p15_dir: "pretrained_structures/p15"
+  pretrained_ar_dir: "pretrained_structures/ar"
   p15_embedding_path: embeddings/p15_idr_embedding.txt
   ar_embedding_path: embeddings/ar_idr_embedding.txt
   
