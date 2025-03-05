@@ -3,6 +3,8 @@ from torch.utils.data import Dataset
 import numpy as np
 from typing import List, Dict, Optional
 from data import utils as du
+import os
+from data.utils import rigid_utils
 
 class IDPCFGDataset(Dataset):
     def __init__(
@@ -30,19 +32,54 @@ class IDPCFGDataset(Dataset):
         """
         super().__init__()
         
+        # Validate input paths
+        if not os.path.exists(p15_data_path):
+            raise ValueError(f"P15 data path does not exist: {p15_data_path}")
+        if not os.path.exists(ar_data_path):
+            raise ValueError(f"AR data path does not exist: {ar_data_path}")
+        if not os.path.exists(p15_embedding_path):
+            raise ValueError(f"P15 embedding path does not exist: {p15_embedding_path}")
+        if not os.path.exists(ar_embedding_path):
+            raise ValueError(f"AR embedding path does not exist: {ar_embedding_path}")
+        
         # Load structure data using correct function
         self.p15_data = du.load_ensemble_structure(p15_data_path)
         self.ar_data = du.load_ensemble_structure(ar_data_path)
         
+        # Validate loaded data
+        if len(self.p15_data) == 0:
+            raise ValueError(f"No structures loaded from P15 data path: {p15_data_path}")
+        if len(self.ar_data) == 0:
+            raise ValueError(f"No structures loaded from AR data path: {ar_data_path}")
+        
         # Load pretrained structures if provided
         if pretrained_p15_path:
+            if not os.path.exists(pretrained_p15_path):
+                raise ValueError(f"Pretrained P15 path does not exist: {pretrained_p15_path}")
             self.pretrained_p15 = du.load_structure_dir(pretrained_p15_path)
+            if len(self.pretrained_p15) == 0:
+                raise ValueError(f"No structures loaded from pretrained P15 path: {pretrained_p15_path}")
+                
         if pretrained_ar_path:
+            if not os.path.exists(pretrained_ar_path):
+                raise ValueError(f"Pretrained AR path does not exist: {pretrained_ar_path}")
             self.pretrained_ar = du.load_structure_dir(pretrained_ar_path)
+            if len(self.pretrained_ar) == 0:
+                raise ValueError(f"No structures loaded from pretrained AR path: {pretrained_ar_path}")
         
         # Load embeddings
         self.p15_embedding = self._load_single_embedding(p15_embedding_path)
         self.ar_embedding = self._load_single_embedding(ar_embedding_path)
+        
+        # Validate embeddings
+        if self.p15_embedding is None:
+            raise ValueError(f"Failed to load P15 embedding from: {p15_embedding_path}")
+        if self.ar_embedding is None:
+            raise ValueError(f"Failed to load AR embedding from: {ar_embedding_path}")
+        
+        # Validate embedding dimensions match
+        if self.p15_embedding.shape != self.ar_embedding.shape:
+            raise ValueError(f"Embedding dimension mismatch: P15 {self.p15_embedding.shape} vs AR {self.ar_embedding.shape}")
         
         # Store parameters
         self.cfg_dropout_prob = cfg_dropout_prob
@@ -51,6 +88,16 @@ class IDPCFGDataset(Dataset):
         # Store lengths for convenience
         self.p15_length = len(self.p15_data[0]['positions'])
         self.ar_length = len(self.ar_data[0]['positions'])
+        
+        # Log dataset statistics
+        print(f"Dataset initialized:")
+        print(f"- P15 structures: {len(self.p15_data)} with length {self.p15_length}")
+        print(f"- AR structures: {len(self.ar_data)} with length {self.ar_length}")
+        print(f"- Embedding dimension: {self.p15_embedding.shape}")
+        if pretrained_p15_path:
+            print(f"- Pretrained P15 structures: {len(self.pretrained_p15)}")
+        if pretrained_ar_path:
+            print(f"- Pretrained AR structures: {len(self.pretrained_ar)}")
 
     def _load_single_embedding(self, path):
         """Load embedding from file."""
@@ -76,10 +123,12 @@ class IDPCFGDataset(Dataset):
         if is_p15:
             data = self.p15_data[idx]
             embedding = self.p15_embedding  # Use the single p15 embedding
+            length = self.p15_length
         else:
             adj_idx = idx - len(self.p15_data)
             data = self.ar_data[adj_idx]
             embedding = self.ar_embedding  # Use the single AR embedding
+            length = self.ar_length
 
         # Apply CFG dropout during training
         if self._is_training and torch.rand(1) < self.cfg_dropout_prob:
@@ -92,22 +141,45 @@ class IDPCFGDataset(Dataset):
             else:
                 data = self._get_pretrained_structure(self.ar_length)
 
+        # Convert positions to tensor
+        positions = torch.from_numpy(data['positions']).float()
+        
+        # Create mask (1 for residues with all backbone atoms)
+        mask = torch.ones(length)
+        
+        # Create sequence indices (1-based)
+        seq_idx = torch.arange(1, length + 1)
+        
+        # Create fixed mask (all zeros for now)
+        fixed_mask = torch.zeros(length)
+        
+        # Calculate rigid body transforms from backbone atoms
+        gt_bb_rigid = rigid_utils.Rigid.from_3_points(
+            positions[:, 0],  # N
+            positions[:, 1],  # CA
+            positions[:, 2],  # C
+        )
+        
+        # Calculate torsion angles (placeholder for now)
+        torsion_angles = torch.zeros(length, 7, 2)  # 7 torsion angles, sin/cos for each
+        
         # Need to match the expected input format
         return {
             # Fields required by ScoreNetwork
-            'res_mask': data['mask'],
-            'seq_idx': data['seq_idx'],
-            'fixed_mask': torch.zeros_like(data['mask']),  # No fixed residues for now
-            'torsion_angles_sin_cos': data['torsion_angles'],
-            'sc_ca_t': data['ca_positions'],
-            'rigids': data['rigids'],
+            'res_mask': mask,
+            'seq_idx': seq_idx,
+            'fixed_mask': fixed_mask,
+            'torsion_angles_sin_cos': torsion_angles,
+            'sc_ca_t': positions[:, 1],  # CA positions
+            'rigids': gt_bb_rigid.to_tensor_7(),
             
             # Additional fields for CFG
             'sequence_embedding': embedding,
             'is_p15': torch.tensor(is_p15),
             
             # Any other fields needed by the diffusion model
-            **{k:v for k,v in data.items() if k not in ['mask', 'torsion_angles', 'ca_positions', 'rigids']}
+            'positions': positions,  # Original positions
+            'length': length
         }
 
     def _get_pretrained_structure(self, length: int) -> Dict:
