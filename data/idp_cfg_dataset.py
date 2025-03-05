@@ -243,20 +243,20 @@ class IDPCFGDataset(Dataset):
             
             # Additional fields for CFG
             'sequence_embedding': sequence_embedding,  # [L, 1024] - expanded to match residue dimension
-            'is_p15': torch.tensor(is_p15),      # scalar
+            'is_p15': torch.tensor(is_p15, dtype=torch.float32),      # scalar
             
             # Time information for diffusion
             't': t_tensor,                       # [1] - 1D tensor for timestep
             
             # Any other fields needed by the diffusion model
             'positions': positions,               # [L, 3]
-            'length': length,                    # scalar
+            'length': torch.tensor(length, dtype=torch.long),         # scalar
             
             # Additional fields that might be needed
-            'aatype': torch.zeros(length),       # [L] - amino acid types (placeholder)
-            'chain_idx': torch.zeros(length),    # [L] - chain indices (placeholder)
-            'chain_mask': torch.ones(length),    # [L] - chain mask (placeholder)
-            'chain_encoding_all': torch.zeros(length),  # [L] - chain encoding (placeholder)
+            'aatype': torch.zeros(length, dtype=torch.long),       # [L] - amino acid types (placeholder)
+            'chain_idx': torch.zeros(length, dtype=torch.long),    # [L] - chain indices (placeholder)
+            'chain_mask': torch.ones(length, dtype=torch.float32),    # [L] - chain mask (placeholder)
+            'chain_encoding_all': torch.zeros(length, dtype=torch.long),  # [L] - chain encoding (placeholder)
             
             # New features for the model
             'edge_features': edge_features,      # [L, 128] - Edge features
