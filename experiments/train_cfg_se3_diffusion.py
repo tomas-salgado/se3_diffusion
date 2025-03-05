@@ -43,8 +43,8 @@ class CFGExperiment:
             pretrained_p15_path=self._conf.data.pretrained_p15_dir,
             pretrained_ar_path=self._conf.data.pretrained_ar_dir,
             # Embeddings for conditioning
-            p15_embedding_path=self._conf.model.sequence_embed.p15_embedding_path,
-            ar_embedding_path=self._conf.model.sequence_embed.ar_embedding_path,
+            p15_embedding_path=self._conf.data.p15_embedding_path,
+            ar_embedding_path=self._conf.data.ar_embedding_path,
             cfg_dropout_prob=self._conf.model.cfg_dropout_prob
         )
         
