@@ -194,36 +194,37 @@ class IDPCFGDataset(Dataset):
         # Sample time uniformly between 0 and 1 for training
         t = torch.rand(1).item() if self._is_training else 1.0
         
-        # Add batch dimension to all tensors
-        mask = mask.unsqueeze(0)  # [1, L]
-        seq_idx = seq_idx.unsqueeze(0)  # [1, L]
-        fixed_mask = fixed_mask.unsqueeze(0)  # [1, L]
-        positions = positions.unsqueeze(0)  # [1, L, 3]
-        torsion_angles = torsion_angles.unsqueeze(0)  # [1, L, 7, 2]
-        gt_bb_rigid = gt_bb_rigid.to_tensor_7().unsqueeze(0)  # [1, L, 7]
-        embedding = embedding.unsqueeze(0)  # [1, 1024]
-        t = torch.tensor([[t]])  # [1, 1]
+        # Debug logging for tensor shapes
+        self._log.debug(f"Tensor shapes:")
+        self._log.debug(f"- seq_idx: {seq_idx.shape}")
+        self._log.debug(f"- mask: {mask.shape}")
+        self._log.debug(f"- fixed_mask: {fixed_mask.shape}")
+        self._log.debug(f"- positions: {positions.shape}")
+        self._log.debug(f"- torsion_angles: {torsion_angles.shape}")
+        self._log.debug(f"- gt_bb_rigid: {gt_bb_rigid.shape}")
+        self._log.debug(f"- embedding: {embedding.shape}")
+        self._log.debug(f"- t: {t}")
         
         # Need to match the expected input format
         return {
             # Fields required by ScoreNetwork
-            'res_mask': mask,                    # [1, L]
-            'seq_idx': seq_idx,                  # [1, L]
-            'fixed_mask': fixed_mask,            # [1, L]
-            'torsion_angles_sin_cos': torsion_angles,  # [1, L, 7, 2]
-            'sc_ca_t': positions[:, :, 1],       # [1, L, 3] - CA positions
-            'rigids': gt_bb_rigid,               # [1, L, 7]
-            'rigids_t': gt_bb_rigid,             # [1, L, 7] - for self-conditioning
+            'res_mask': mask,                    # [L]
+            'seq_idx': seq_idx,                  # [L]
+            'fixed_mask': fixed_mask,            # [L]
+            'torsion_angles_sin_cos': torsion_angles,  # [L, 7, 2]
+            'sc_ca_t': positions[:, 1],          # [L, 3] - CA positions
+            'rigids': gt_bb_rigid.to_tensor_7(), # [L, 7]
+            'rigids_t': gt_bb_rigid.to_tensor_7(), # [L, 7] - for self-conditioning
             
             # Additional fields for CFG
-            'sequence_embedding': embedding,      # [1, 1024]
-            'is_p15': torch.tensor([[is_p15]]),  # [1, 1]
+            'sequence_embedding': embedding,      # [1024]
+            'is_p15': torch.tensor(is_p15),      # scalar
             
             # Time information for diffusion
-            't': t,                              # [1, 1]
+            't': t,                              # scalar
             
             # Any other fields needed by the diffusion model
-            'positions': positions,               # [1, L, 3]
+            'positions': positions,               # [L, 3]
             'length': length                     # scalar
         }
 
