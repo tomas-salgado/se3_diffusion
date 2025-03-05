@@ -194,26 +194,37 @@ class IDPCFGDataset(Dataset):
         # Sample time uniformly between 0 and 1 for training
         t = torch.rand(1).item() if self._is_training else 1.0
         
+        # Add batch dimension to all tensors
+        mask = mask.unsqueeze(0)  # [1, L]
+        seq_idx = seq_idx.unsqueeze(0)  # [1, L]
+        fixed_mask = fixed_mask.unsqueeze(0)  # [1, L]
+        positions = positions.unsqueeze(0)  # [1, L, 3]
+        torsion_angles = torsion_angles.unsqueeze(0)  # [1, L, 7, 2]
+        gt_bb_rigid = gt_bb_rigid.to_tensor_7().unsqueeze(0)  # [1, L, 7]
+        embedding = embedding.unsqueeze(0)  # [1, 1024]
+        t = torch.tensor([[t]])  # [1, 1]
+        
         # Need to match the expected input format
         return {
             # Fields required by ScoreNetwork
-            'res_mask': mask,
-            'seq_idx': seq_idx,
-            'fixed_mask': fixed_mask,
-            'torsion_angles_sin_cos': torsion_angles,
-            'sc_ca_t': positions[:, 1],  # CA positions
-            'rigids': gt_bb_rigid.to_tensor_7(),
+            'res_mask': mask,                    # [1, L]
+            'seq_idx': seq_idx,                  # [1, L]
+            'fixed_mask': fixed_mask,            # [1, L]
+            'torsion_angles_sin_cos': torsion_angles,  # [1, L, 7, 2]
+            'sc_ca_t': positions[:, :, 1],       # [1, L, 3] - CA positions
+            'rigids': gt_bb_rigid,               # [1, L, 7]
+            'rigids_t': gt_bb_rigid,             # [1, L, 7] - for self-conditioning
             
             # Additional fields for CFG
-            'sequence_embedding': embedding,
-            'is_p15': torch.tensor(is_p15),
+            'sequence_embedding': embedding,      # [1, 1024]
+            'is_p15': torch.tensor([[is_p15]]),  # [1, 1]
             
             # Time information for diffusion
-            't': t,
+            't': t,                              # [1, 1]
             
             # Any other fields needed by the diffusion model
-            'positions': positions,  # Original positions
-            'length': length
+            'positions': positions,               # [1, L, 3]
+            'length': length                     # scalar
         }
 
     def _get_pretrained_structure(self, length: int) -> Dict:
