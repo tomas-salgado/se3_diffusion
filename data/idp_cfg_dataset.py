@@ -240,8 +240,36 @@ class IDPCFGDataset(Dataset):
         # Extract required data
         positions = structure['positions']
         length = positions.shape[0]
-        gt_bb_rigid = structure['rigids']
-        torsion_angles = structure['torsion_angles']
+        
+        # Process the structure - compute rigid transformations and torsion angles
+        
+        # First convert positions to torch tensor if they're numpy arrays
+        if isinstance(positions, np.ndarray):
+            positions_tensor = torch.tensor(positions, dtype=torch.float32)
+        else:
+            positions_tensor = positions
+            
+        # Compute backbone rigid transformations from N, CA, C atomic positions
+        # positions has shape [L, 4, 3] for N, CA, C, O atoms
+        n_xyz = positions_tensor[:, 0]   # N atoms
+        ca_xyz = positions_tensor[:, 1]  # CA atoms
+        c_xyz = positions_tensor[:, 2]   # C atoms
+        
+        # Create rigid transformations using the Rigid.from_3_points function
+        # This creates transformations using N (negative x-axis), CA (origin), and C (xy-plane)
+        gt_bb_rigid = rigid_utils.Rigid.from_3_points(
+            p_neg_x_axis=n_xyz,  # N atoms
+            origin=ca_xyz,       # CA atoms 
+            p_xy_plane=c_xyz     # C atoms
+        )
+        
+        # Create placeholder for torsion angles (7 angles, sin & cos)
+        # In a full implementation, we would compute proper torsion angles
+        torsion_angles = torch.zeros((length, 7, 2), dtype=torch.float32)
+        
+        # Initialize sin/cos values to neutral
+        torsion_angles[:, :, 0] = 0.0  # sin
+        torsion_angles[:, :, 1] = 1.0  # cos
         
         # Create amino acid sequence indices (0-indexed)
         seq_idx = torch.arange(length, dtype=torch.long)
@@ -262,7 +290,7 @@ class IDPCFGDataset(Dataset):
             'res_mask': mask,                    # [L]
             'seq_idx': seq_idx,                  # [L]
             'fixed_mask': fixed_mask,            # [L]
-            'sc_ca_t': positions[:, 1],          # [L, 3] - CA positions for self-conditioning
+            'sc_ca_t': ca_xyz,                   # [L, 3] - CA positions for self-conditioning
             't': t_tensor,                       # [1] - 1D tensor for timestep
             
             # Features for the score model
@@ -274,7 +302,7 @@ class IDPCFGDataset(Dataset):
             'sequence': embedding,               # [1024] - Raw embedding tensor
             
             # Any other fields needed by the diffusion model
-            'positions': positions,              # [L, 3, 3] - N, CA, C atom positions
+            'positions': positions_tensor,       # [L, 4, 3] - N, CA, C, O atom positions
             'length': torch.tensor(length, dtype=torch.long),  # scalar
             
             # Metadata

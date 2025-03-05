@@ -626,6 +626,7 @@ def load_ensemble_structure(pdb_path, chain_id=None):
             - positions: numpy array of shape (L, 4, 3) where L is sequence length,
                         4 is for N, CA, C, O atoms, and 3 is for xyz coordinates
     """
+    print(f"Loading ensemble structure from {pdb_path}")
     parser = PDBParser(QUIET=True)
     structure = parser.get_structure("protein", pdb_path)
     
@@ -661,6 +662,7 @@ def load_ensemble_structure(pdb_path, chain_id=None):
                 "positions": np.array(positions)  # Shape: (L, 4, 3)
             })
     
+    print(f"Loaded {len(all_structures)} structures from {pdb_path}")
     return all_structures
 
 def load_structure_dir(dir_path, chain_id=None):
