@@ -195,7 +195,13 @@ class IDPCFGDataset(Dataset):
         t = torch.rand(1).item() if self._is_training else 1.0
         
         # Create timestep tensor with correct shape [1]
-        t_tensor = torch.tensor(t).reshape(-1)  # This ensures 1D shape
+        t_tensor = torch.tensor([t])  # This ensures 1D shape [1]
+        
+        # Debug logging for timestep
+        self._log.debug(f"Timestep details:")
+        self._log.debug(f"- t value: {t}")
+        self._log.debug(f"- t_tensor shape: {t_tensor.shape}")
+        self._log.debug(f"- t_tensor: {t_tensor}")
         
         # Expand sequence embedding to match residue dimension
         sequence_embedding = embedding.unsqueeze(0).expand(length, -1)  # [L, 1024]
@@ -209,7 +215,7 @@ class IDPCFGDataset(Dataset):
         self._log.debug(f"- torsion_angles: {torsion_angles.shape}")
         self._log.debug(f"- gt_bb_rigid: {gt_bb_rigid.shape}")
         self._log.debug(f"- sequence_embedding: {sequence_embedding.shape}")
-        self._log.debug(f"- t: {t_tensor.shape}")
+        self._log.debug(f"- t_tensor: {t_tensor.shape}")
         
         # Need to match the expected input format
         return {
