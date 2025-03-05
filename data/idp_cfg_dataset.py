@@ -280,7 +280,7 @@ class IDPCFGDataset(Dataset):
         res_mask = torch.ones(length, dtype=torch.float32)
         fixed_mask = torch.zeros(length, dtype=torch.float32)
         
-        # Sample a random timestep [0, 1]
+        # Sample a random timestep [0, 1] - keep as 1D tensor
         t = torch.rand(1, dtype=torch.float32)
         
         # Return the sample data with all required fields
@@ -290,7 +290,7 @@ class IDPCFGDataset(Dataset):
             'seq_idx': seq_idx,                      # [L]
             'fixed_mask': fixed_mask,                # [L]
             'sc_ca_t': ca_xyz,                       # [L, 3] - CA positions for self-conditioning
-            't': t.unsqueeze(0),                     # [1, 1] - timestep
+            't': t,                                  # [1] - 1D tensor for timestep (don't unsqueeze)
             
             # Features for the score model
             'torsion_angles_sin_cos': torsion_angles,  # [L, 7, 2]
@@ -342,7 +342,7 @@ class LengthBasedBatchSampler:
         
         This function handles the special case of sequence embeddings and timesteps.
         For sequence embeddings, we stack them into a batch tensor.
-        For timesteps, we ensure they remain 1D after stacking.
+        For timesteps, we ensure they maintain the correct shape.
         """
         result = {}
         
@@ -353,8 +353,10 @@ class LengthBasedBatchSampler:
             
             # Special handling for timestep tensor
             if key == 't':
-                # Stack timesteps and ensure 1D shape [B]
-                result[key] = torch.stack(values).squeeze(-1)
+                # Stack timesteps - Each timestep is a 1D tensor of shape [1]
+                # After stacking, result will be [B, 1]
+                # The model expects the first dimension to be batch size
+                result[key] = torch.cat(values, dim=0)
             
             # Special handling for sequence embedding
             elif key == 'sequence':
@@ -368,7 +370,7 @@ class LengthBasedBatchSampler:
             # Handle lists, strings, etc.
             else:
                 result[key] = values
-            
+                
         return result
     
     def __iter__(self):
