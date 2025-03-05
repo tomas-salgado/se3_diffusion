@@ -15,7 +15,7 @@ data:
   pretrained_structures_dir: "pretrained_structures"
   pretrained_p15_dir: "pretrained_structures/p15"
   pretrained_ar_dir: "pretrained_structures/ar"
-  p15_embedding_path: embeddings/p15_idr_embedding.txt
+  p15_embedding_path: embeddings/p15PAF_idr_embedding.txt
   ar_embedding_path: embeddings/ar_idr_embedding.txt
   
 training:
