@@ -191,6 +191,9 @@ class IDPCFGDataset(Dataset):
         # Calculate torsion angles (placeholder for now)
         torsion_angles = torch.zeros(length, 7, 2)  # 7 torsion angles, sin/cos for each
         
+        # Sample time uniformly between 0 and 1 for training
+        t = torch.rand(1).item() if self._is_training else 1.0
+        
         # Need to match the expected input format
         return {
             # Fields required by ScoreNetwork
@@ -204,6 +207,9 @@ class IDPCFGDataset(Dataset):
             # Additional fields for CFG
             'sequence_embedding': embedding,
             'is_p15': torch.tensor(is_p15),
+            
+            # Time information for diffusion
+            't': t,
             
             # Any other fields needed by the diffusion model
             'positions': positions,  # Original positions
