@@ -28,21 +28,15 @@ class IDPCFGDataset(Dataset):
         """
         super().__init__()
         
-        # Load conformations
-        self.p15_data = du.load_structure_data(p15_data_path)
-        self.ar_data = du.load_structure_data(ar_data_path)
+        # Load structure data using correct function
+        self.p15_data = du.load_ensemble_structure(p15_data_path)
+        self.ar_data = du.load_ensemble_structure(ar_data_path)
         
-        # Load pretrained structures or use paths for generation
-        self.pretrained_p15_data = (
-            du.load_structure_data(pretrained_p15_path)
-            if pretrained_p15_path is not None
-            else self.p15_data  # Fallback to original data
-        )
-        self.pretrained_ar_data = (
-            du.load_structure_data(pretrained_ar_path)
-            if pretrained_ar_path is not None
-            else self.ar_data  # Fallback to original data
-        )
+        # Load pretrained structures if provided
+        if pretrained_p15_path:
+            self.pretrained_p15 = du.load_structure_dir(pretrained_p15_path)
+        if pretrained_ar_path:
+            self.pretrained_ar = du.load_structure_dir(pretrained_ar_path)
         
         # Load embeddings
         self.p15_embedding = self._load_single_embedding(p15_embedding_path)

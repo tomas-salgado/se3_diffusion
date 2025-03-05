@@ -19,6 +19,7 @@ import io
 import gzip
 from torch.utils import data
 import torch
+from Bio.PDB import *
 
 Protein = protein.Protein
 
@@ -612,3 +613,112 @@ def save_fasta(
     with open(file_path, 'w') as f:
         for x,y in zip(seq_names, pred_seqs):
             f.write(f'>{x}\n{y}\n')
+
+def load_ensemble_structure(pdb_path, chain_id=None):
+    """Load multiple structures from a single PDB file (ensemble).
+    
+    Args:
+        pdb_path: Path to ensemble PDB file
+        chain_id: Optional chain ID to load. If None, loads all chains.
+        
+    Returns:
+        Dictionary containing:
+            - coords: List of lists of dictionaries with backbone atom coordinates (N, CA, C, O)
+                     First level list is for different models/structures
+                     Second level list is for residues within each structure
+            - seq: String of one-letter amino acid codes (same for all models)
+    """
+    parser = PDBParser(QUIET=True)
+    structure = parser.get_structure("protein", pdb_path)
+    
+    all_coords = []  # Will contain coords for each model
+    seq = []  # Will be set from first model
+    
+    # Iterate through models (different structures in ensemble)
+    for model in structure:
+        model_coords = []
+        model_seq = []
+        
+        # Get residues from specified chain or all chains
+        if chain_id is not None:
+            residues = list(model[chain_id].get_residues())
+        else:
+            residues = list(model.get_residues())
+            
+        for res in residues:
+            if res.get_resname() not in residue_constants.restype_3to1:
+                continue
+                
+            backbone = {}
+            for atom in res:
+                if atom.get_name() in ["N", "CA", "C", "O"] and atom.is_backbone():
+                    backbone[atom.get_name()] = atom.get_coord()
+                    
+            if len(backbone) == 4:  # N, CA, C, O
+                model_coords.append(backbone)
+                model_seq.append(residue_constants.restype_3to1[res.get_resname()])
+                
+        all_coords.append(model_coords)
+        if not seq:  # Only set sequence from first model
+            seq = model_seq
+            
+    return {
+        "coords": all_coords,  # List of structures, each with list of residue coords
+        "seq": "".join(seq)    # Single sequence (same for all models)
+    }
+
+def load_structure_dir(dir_path, chain_id=None):
+    """Load multiple structures from a directory of PDB files.
+    
+    Args:
+        dir_path: Path to directory containing PDB files
+        chain_id: Optional chain ID to load. If None, loads all chains.
+        
+    Returns:
+        Dictionary containing:
+            - coords: List of lists of dictionaries with backbone atom coordinates
+                     First level list is for different PDB files
+                     Second level list is for residues within each structure
+            - seq: String of one-letter amino acid codes (same for all structures)
+    """
+    parser = PDBParser(QUIET=True)
+    all_coords = []
+    seq = []
+    
+    # Sort PDB files to ensure consistent ordering
+    pdb_files = sorted([f for f in os.listdir(dir_path) if f.endswith('.pdb')])
+    
+    for pdb_file in pdb_files:
+        pdb_path = os.path.join(dir_path, pdb_file)
+        structure = parser.get_structure("protein", pdb_path)
+        
+        # Get residues from specified chain or all chains
+        if chain_id is not None:
+            residues = list(structure[0][chain_id].get_residues())
+        else:
+            residues = list(structure[0].get_residues())
+            
+        structure_coords = []
+        structure_seq = []
+        
+        for res in residues:
+            if res.get_resname() not in residue_constants.restype_3to1:
+                continue
+                
+            backbone = {}
+            for atom in res:
+                if atom.get_name() in ["N", "CA", "C", "O"] and atom.is_backbone():
+                    backbone[atom.get_name()] = atom.get_coord()
+                    
+            if len(backbone) == 4:
+                structure_coords.append(backbone)
+                structure_seq.append(residue_constants.restype_3to1[res.get_resname()])
+                
+        all_coords.append(structure_coords)
+        if not seq:  # Only set sequence from first structure
+            seq = structure_seq
+            
+    return {
+        "coords": all_coords,  # List of structures, each with list of residue coords
+        "seq": "".join(seq)    # Single sequence (same for all structures)
+    }
