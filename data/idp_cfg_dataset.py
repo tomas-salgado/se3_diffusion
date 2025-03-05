@@ -317,15 +317,18 @@ class LengthBasedBatchSampler:
         self.n_batches = n_p15_batches + n_ar_batches
 
     def collate_fn(self, batch):
-        """Custom collate function to handle timestep tensor correctly."""
-        # Stack all tensors except timestep
+        """Custom collate function to handle both tensor and non-tensor values."""
         stacked = {}
         for key in batch[0].keys():
             if key == 't':
                 # For timestep, we want to keep it as a 1D tensor
                 stacked[key] = torch.stack([item[key] for item in batch]).squeeze(-1)
-            else:
+            elif isinstance(batch[0][key], torch.Tensor):
+                # Stack tensor values
                 stacked[key] = torch.stack([item[key] for item in batch])
+            else:
+                # For non-tensor values (like length), just take the first value
+                stacked[key] = batch[0][key]
         return stacked
     
     def __iter__(self):
