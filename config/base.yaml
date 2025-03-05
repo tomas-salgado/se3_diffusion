@@ -51,7 +51,7 @@ model:
   cfg_dropout_prob: 0.1  # Probability of dropping embeddings during training
   sequence_embed:
     embed_dim: 1280
-    embedding_path: embeddings/p15PAF_idr_embeddings.txt
+    embedding_path: embeddings/p15PAF_idr_embedding.txt
     embedding_format: txt
   embed:
     index_embed_size: 32
