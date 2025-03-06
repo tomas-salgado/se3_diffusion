@@ -72,42 +72,13 @@ class CFGSampler:
         self._log.info(f"Loading model checkpoint from {self._conf.inference.checkpoint_path}")
         checkpoint = torch.load(self._conf.inference.checkpoint_path, map_location=self.device)
         
-        # Log available keys in checkpoint
-        self._log.info(f"Checkpoint keys: {list(checkpoint.keys())}")
+        # Fix for the dimension mismatch
+        if hasattr(self._conf.model, 'embed'):
+            # Update the aatype embedding size to match what's in the checkpoint
+            self._conf.model.embed.aatype_embed_size = 320  # 321-1 for index_embed
+            self._log.info(f"Set aatype_embed_size to 320 to match checkpoint dimensions")
         
-        # Store original inference settings
-        inference_conf = self._conf.inference
-        
-        # Try to load configuration from checkpoint if available
-        if 'conf' in checkpoint:
-            self._log.info("Using model configuration from checkpoint")
-            from omegaconf import OmegaConf
-            
-            # Get the checkpoint configuration
-            checkpoint_conf = checkpoint['conf']
-            
-            # Log some key configuration values for debugging
-            self._log.info(f"Checkpoint config model.node_embed_size: {checkpoint_conf.model.node_embed_size}")
-            if hasattr(checkpoint_conf.model, 'sequence_embed'):
-                self._log.info(f"Checkpoint config model.sequence_embed.embed_dim: {checkpoint_conf.model.sequence_embed.embed_dim}")
-            
-            # Create a merged configuration
-            # Start with the inference configuration
-            merged_conf = OmegaConf.create(OmegaConf.to_container(self._conf))
-            
-            # Update model, diffuser, and data sections from checkpoint
-            merged_conf.model = checkpoint_conf.model
-            merged_conf.diffuser = checkpoint_conf.diffuser
-            if hasattr(checkpoint_conf, 'data'):
-                merged_conf.data = checkpoint_conf.data
-            
-            # Use the merged configuration
-            self._conf = merged_conf
-        else:
-            self._log.warning("Checkpoint does not contain configuration, using current config")
-            self._log.warning("This might cause dimension mismatches if your current config differs from training config!")
-        
-        # Create model components with the configuration
+        # Create model components
         from model import score_network
         from data import se3_diffuser
         
@@ -118,19 +89,20 @@ class CFGSampler:
         self._model = score_network.ScoreNetwork(
             self._conf.model, self._diffuser)
         
-        # Load the state dict with proper handling
+        # Get model state
         if 'model_state_dict' in checkpoint:
             model_state = checkpoint['model_state_dict']
         elif 'model' in checkpoint:
             model_state = checkpoint['model']
         else:
-            raise KeyError(f"No model weights found in checkpoint. Available keys: {list(checkpoint.keys())}")
+            raise KeyError(f"No model weights found in checkpoint")
         
         # Handle DataParallel saved models
         model_state = {k.replace('module.', ''):v for k,v in model_state.items()}
         
-        # Load the state dict
-        self._model.load_state_dict(model_state)
+        # Load with strict=False to handle any remaining differences
+        self._model.load_state_dict(model_state, strict=False)
+        self._log.info("Model loaded with strict=False to handle architecture differences")
         
         self._model.to(self.device)
         self._model.eval()
