@@ -1,0 +1,23 @@
+# Configuration for classifier-free guidance (CFG) inference
+# Extends the base configuration with inference-specific settings
+
+defaults:
+  - base                     # Base configuration for model architecture and diffuser
+  - _self_                   # Allow overrides from command line
+
+# Inference-specific settings
+inference:
+  checkpoint_path: "/outputs/checkpoints/step_10000.pth"  # Path to the trained model checkpoint
+  min_t: 0.01                # Minimum timestep for sampling
+  max_t: 1.0                 # Maximum timestep for sampling
+  num_t: 100                 # Number of timesteps for sampling
+  cfg_scale: 5.0             # Guidance scale (higher values = stronger conditioning)
+  save_trajectory: false     # Whether to save trajectory frames
+  traj_save_frequency: 10    # How often to save trajectory frames (every N steps)
+  num_samples: 10            # Number of samples to generate
+
+# Command-line parameters (can be overridden)
+output_dir: "cfg_outputs"     # Directory to save generated structures
+embedding_path: "embeddings/p15_idr_embedding.txt"  # Path to embedding file
+cfg_scale: 5.0                # Guidance scale (can override the default)
+num_samples: 10               # Number of samples to generate 
