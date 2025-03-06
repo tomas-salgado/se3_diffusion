@@ -72,18 +72,34 @@ class CFGSampler:
         self._log.info(f"Loading model checkpoint from {self._conf.inference.checkpoint_path}")
         checkpoint = torch.load(self._conf.inference.checkpoint_path, map_location=self.device)
         
-        # Create the model - MODIFIED FOR CFG
+        # IMPORTANT: Load the configuration from the checkpoint
+        if 'conf' in checkpoint:
+            self._log.info("Using model configuration from checkpoint")
+            from omegaconf import OmegaConf
+            
+            # Keep inference settings from current config
+            inference_conf = self._conf.inference
+            
+            # Replace the current config with the one from checkpoint
+            self._conf = checkpoint['conf']
+            
+            # Restore inference settings
+            self._conf.inference = inference_conf
+        else:
+            self._log.warning("Checkpoint does not contain configuration, using current config")
+        
+        # Create model components with the updated configuration
         from model import score_network
         from data import se3_diffuser
         
-        # Create diffuser (same as in train_se3_diffusion.py)
+        # Create diffuser
         self._diffuser = se3_diffuser.SE3Diffuser(self._conf.diffuser)
         
-        # Create the model using ScoreNetwork directly
+        # Create the model using ScoreNetwork
         self._model = score_network.ScoreNetwork(
             self._conf.model, self._diffuser)
         
-        # Load the state dict - WITH SPECIAL HANDLING FOR DATAPARALLEL MODELS
+        # Load the state dict with proper handling
         if 'model_state_dict' in checkpoint:
             model_state = checkpoint['model_state_dict']
         elif 'model' in checkpoint:
@@ -93,28 +109,12 @@ class CFGSampler:
             self._log.info(f"Available keys in checkpoint: {list(checkpoint.keys())}")
             raise KeyError(f"No model weights found in checkpoint. Available keys: {list(checkpoint.keys())}")
         
-        # Handle DataParallel saved models by removing 'module.' prefix
+        # Handle DataParallel saved models
         model_state = {k.replace('module.', ''):v for k,v in model_state.items()}
         
-        # Print a sample of model keys to debug
-        self._log.info(f"Sample model keys from checkpoint: {list(model_state.keys())[:5]}")
-        
-        # Load with strict=False to allow partial loading when necessary
-        self._model.load_state_dict(model_state, strict=False)
-        
-        # Log missing or unexpected keys for debugging
-        model_keys = set(self._model.state_dict().keys())
-        checkpoint_keys = set(model_state.keys())
-        missing_keys = model_keys - checkpoint_keys
-        unexpected_keys = checkpoint_keys - model_keys
-        
-        if missing_keys:
-            self._log.warning(f"Missing {len(missing_keys)} keys in checkpoint")
-            self._log.warning(f"Sample missing keys: {list(missing_keys)[:5]}")
-        
-        if unexpected_keys:
-            self._log.warning(f"Unexpected {len(unexpected_keys)} keys in checkpoint")
-            self._log.warning(f"Sample unexpected keys: {list(unexpected_keys)[:5]}")
+        # Load the state dict
+        self._log.info(f"Loading state dict with {len(model_state)} keys")
+        self._model.load_state_dict(model_state)
         
         self._model.to(self.device)
         self._model.eval()
