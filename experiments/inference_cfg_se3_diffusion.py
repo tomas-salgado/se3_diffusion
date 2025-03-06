@@ -72,36 +72,9 @@ class CFGSampler:
         self._log.info(f"Loading model checkpoint from {self._conf.inference.checkpoint_path}")
         checkpoint = torch.load(self._conf.inference.checkpoint_path, map_location=self.device)
         
-        # Get the checkpoint configuration if available
-        if 'conf' in checkpoint:
-            from omegaconf import OmegaConf
-            orig_conf = self._conf.copy()
-            
-            # Use model configuration from checkpoint
-            self._log.info("Using model configuration from checkpoint")
-            checkpoint_conf = checkpoint['conf']
-            
-            # Replace only the model section of the configuration
-            self._conf.model = checkpoint_conf.model
-            self._conf.diffuser = checkpoint_conf.diffuser
-            
-            # Keep inference settings
-            self._conf.inference = orig_conf.inference
-        
-        # Create model components
-        from model import score_network
-        from data import se3_diffuser
-        
-        # Create diffuser
-        self._diffuser = se3_diffuser.SE3Diffuser(self._conf.diffuser)
-        
-        # Create the model
-        self._model = score_network.ScoreNetwork(
-            self._conf.model, self._diffuser)
-        
         # Get model state
         if 'model_state_dict' in checkpoint:
-            model_state = checkpoint['model_state_dict']
+            model_state = checkpoint['model_state_dict'] 
         elif 'model' in checkpoint:
             model_state = checkpoint['model']
         else:
@@ -110,13 +83,28 @@ class CFGSampler:
         # Handle DataParallel saved models
         model_state = {k.replace('module.', ''):v for k,v in model_state.items()}
         
-        # Load with strict=False to handle any remaining differences
-        missing_keys, unexpected_keys = self._model.load_state_dict(model_state, strict=False)
+        # CUSTOM APPROACH: Directly analyze the checkpoint to get dimensions
+        input_dim = model_state['embedding_layer.node_embedder.0.weight'].shape[1]
+        self._log.info(f"Found input dimension in checkpoint: {input_dim}")
         
-        if missing_keys:
-            self._log.warning(f"Missing keys: {missing_keys}")
-        if unexpected_keys:
-            self._log.warning(f"Unexpected keys: {unexpected_keys}")
+        # Modify model configuration directly
+        from model import score_network
+        from data import se3_diffuser
+        import torch.nn as nn
+        
+        # Create diffuser
+        self._diffuser = se3_diffuser.SE3Diffuser(self._conf.diffuser)
+        
+        # Create the model
+        self._model = score_network.ScoreNetwork(
+            self._conf.model, self._diffuser)
+        
+        # CRITICAL FIX: Manually replace the first embedding layer to match the checkpoint dimension
+        node_embed_size = self._conf.model.node_embed_size
+        self._model.embedding_layer.node_embedder[0] = nn.Linear(input_dim, node_embed_size)
+        
+        # Now load the state dict
+        self._model.load_state_dict(model_state)
         
         self._model.to(self.device)
         self._model.eval()
