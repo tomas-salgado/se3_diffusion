@@ -4,32 +4,30 @@ This script implements inference with classifier-free guidance for the SE(3) dif
 It allows generating protein structures conditioned on sequence embeddings with various guidance scales.
 
 Sample command:
-> python experiments/inference_cfg_se3_diffusion.py cfg_scale=7.5 embedding_path=embeddings/p15_idr_embedding.txt
+> python experiments/inference_cfg_se3_diffusion.py inference.cfg_scale=7.5 embedding_path=embeddings/p15_idr_embedding.txt
 
 """
 
 import os
 import time
-import tree
-import numpy as np
-import hydra
-import torch
 import logging
+import argparse
+import numpy as np
+import torch
+import hydra
 import json
 from pathlib import Path
 from typing import Dict, Optional, List, Tuple
-
-from analysis import utils as au
-from data import utils as du
-from data import residue_constants
-from data import so3_diffuser
-from data import all_atom
-from experiments import train_se3_diffusion
+from datetime import datetime
 from omegaconf import DictConfig, OmegaConf
-from openfold.utils import rigid_utils
-from model import score_network
-from data import se3_diffuser
 
+from data import all_atom
+from data import se3_diffuser
+from data import residue_constants
+from data import utils as du
+from model import score_network
+from openfold.utils import rigid_utils
+from experiments import train_se3_diffusion
 
 CA_IDX = residue_constants.atom_order['CA']
 
@@ -37,54 +35,38 @@ CA_IDX = residue_constants.atom_order['CA']
 class CFGSampler:
     """Sampler that implements classifier-free guidance for protein structure generation."""
 
-    def __init__(
-        self,
-        conf: DictConfig,
-        conf_overrides: Dict = None
-    ):
+    def __init__(self, conf: DictConfig):
         """Initialize the CFG sampler.
         
         Args:
             conf: The configuration object.
-            conf_overrides: Dictionary of configuration overrides.
         """
         self._log = logging.getLogger(__name__)
-        self._conf = OmegaConf.merge(conf, conf_overrides or {})
+        self._conf = conf
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # Load model
-        self._load_model()
+        # Create the diffuser first (same as in training)
+        self._diffuser = se3_diffuser.SE3Diffuser(self._conf.diffuser, device=self.device)
         
-        # Create diffuser
-        self._diffuser = so3_diffuser.SE3Diffuser(
-            self._conf.diffuser,
-            device=self.device,
-        )
+        # Create and load the model (similar to training)
+        self._load_model()
         
         # Set up inference parameters
         self.min_t = self._conf.inference.min_t
         self.max_t = self._conf.inference.max_t
         self.num_t = self._conf.inference.num_t
         self.cfg_scale = self._conf.inference.cfg_scale
+        self.num_samples = self._conf.inference.num_samples
 
     def _load_model(self):
-        """Load the model from a checkpoint."""
-        self._log.info(f"Loading model checkpoint from {self._conf.inference.checkpoint_path}")
-        checkpoint = torch.load(self._conf.inference.checkpoint_path, map_location=self.device)
+        """Load the model from a checkpoint, maintaining training configuration."""
+        checkpoint_path = self._conf.inference.checkpoint_path
+        self._log.info(f"Loading model checkpoint from {checkpoint_path}")
         
-        # IMPORTANT: Update configuration for sequence conditioning
-        self._conf.model.use_sequence_conditioning = True
-        self._conf.model.conditioning_method = 'cross_attention'
+        # Load checkpoint
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
         
-        # Ensure sequence_embed config exists and is properly set up
-        if not hasattr(self._conf.model, 'sequence_embed'):
-            self._conf.model.sequence_embed = {}
-        
-        self._conf.model.sequence_embed.embed_dim = 256
-        self._conf.model.sequence_embed.adapt_dimensions = True
-        self._conf.model.sequence_embed.embedding_format = 'txt'
-        
-        # Get model state
+        # Determine the appropriate state dict key
         if 'model_state_dict' in checkpoint:
             model_state = checkpoint['model_state_dict'] 
         elif 'model' in checkpoint:
@@ -95,295 +77,245 @@ class CFGSampler:
         # Handle DataParallel saved models
         model_state = {k.replace('module.', ''):v for k,v in model_state.items()}
         
-        # Analyze the checkpoint to get dimensions
-        input_dim = model_state['embedding_layer.node_embedder.0.weight'].shape[1]
-        self._log.info(f"Found input dimension in checkpoint: {input_dim}")
+        # Create the model with the same configuration as during training
+        self._model = score_network.ScoreNetwork(self._conf.model, self._diffuser)
         
-        # Create model components
-        from model import score_network
-        from data import se3_diffuser
-        import torch.nn as nn
+        # Load the state dict
+        result = self._model.load_state_dict(model_state, strict=False)
         
-        # Create diffuser
-        self._diffuser = se3_diffuser.SE3Diffuser(self._conf.diffuser)
-        
-        # Create the model with updated configuration
-        self._model = score_network.ScoreNetwork(
-            self._conf.model, self._diffuser)
-        
-        # Replace the first embedding layer to match checkpoint dimensions
-        node_embed_size = self._conf.model.node_embed_size
-        self._model.embedding_layer.node_embedder[0] = nn.Linear(input_dim, node_embed_size)
-        
-        # Now load the state dict
-        self._model.load_state_dict(model_state)
-        
+        # Log any issues with loading
+        if result.unexpected_keys:
+            self._log.warning(f"Unexpected keys in checkpoint: {result.unexpected_keys}")
+        if result.missing_keys:
+            self._log.warning(f"Missing keys in model: {result.missing_keys}")
+            
         self._model.to(self.device)
         self._model.eval()
-        
         self._log.info(f"Model loaded successfully")
 
     def _load_embedding(self, embedding_path: str) -> torch.Tensor:
-        """Load the embedding from a file.
+        """Load the sequence embedding from a file.
         
         Args:
             embedding_path: Path to the embedding file.
             
         Returns:
-            The embedding tensor.
+            torch.Tensor: The loaded embedding.
         """
         self._log.info(f"Loading embedding from {embedding_path}")
         
-        if embedding_path.endswith('.txt'):
-            # Read embedding from text file (one float per line)
+        try:
             with open(embedding_path, 'r') as f:
-                embedding_text = f.read().strip()
-                # Handle different formatting possibilities
-                if '[' in embedding_text:
-                    # JSON-like format
-                    embedding_text = embedding_text.replace('[', '').replace(']', '')
+                lines = f.readlines()
                 
-                # Split by commas if present, otherwise by whitespace/newlines
-                if ',' in embedding_text:
-                    values = [float(x.strip()) for x in embedding_text.split(',') if x.strip()]
-                else:
-                    values = [float(x.strip()) for x in embedding_text.split() if x.strip()]
+            # Remove any brackets, newlines, or extra spaces
+            embedding_str = ' '.join([line.strip() for line in lines])
+            embedding_str = embedding_str.replace('[', '').replace(']', '')
+            
+            # Convert to tensor
+            embedding = torch.tensor([float(x) for x in embedding_str.split()], 
+                                    dtype=torch.float32)
+            
+            # Reshape to match expected format if needed
+            if embedding.dim() == 1:
+                embedding = embedding.unsqueeze(0)  # Add batch dimension
                 
-                embedding = torch.tensor(values, dtype=torch.float32)
-        
-        elif embedding_path.endswith('.pt') or embedding_path.endswith('.pth'):
-            # Load PyTorch tensor directly
-            embedding = torch.load(embedding_path, map_location=self.device)
-        
-        elif embedding_path.endswith('.json'):
-            # Load from JSON file
-            with open(embedding_path, 'r') as f:
-                values = json.load(f)
-                embedding = torch.tensor(values, dtype=torch.float32)
-        
-        else:
-            raise ValueError(f"Unsupported embedding file format: {embedding_path}")
-        
-        self._log.info(f"Loaded embedding with shape {embedding.shape}")
-        return embedding
+            self._log.info(f"Loaded embedding with shape {embedding.shape}")
+            return embedding.to(self.device)
+            
+        except Exception as e:
+            self._log.error(f"Failed to load embedding: {e}")
+            raise
 
-    def _prepare_sample_inputs(self, length: int) -> Dict:
-        """Prepare inputs for the sampling process.
+    def _sample_diffused_positions(
+        self, 
+        seq_embedding: torch.Tensor, 
+        seq_length: int,
+        num_samples: int = 1
+    ) -> List[torch.Tensor]:
+        """Sample positions using classifier-free guidance.
         
         Args:
-            length: The length of the protein to generate.
-            
-        Returns:
-            Dictionary of model inputs.
-        """
-        # Create residue mask
-        res_mask = torch.ones(length, dtype=torch.float32, device=self.device)
-        
-        # Create sequence indices (1-indexed)
-        seq_idx = torch.arange(1, length + 1, dtype=torch.long, device=self.device)
-        
-        # Create fixed mask (all zeros for full generation)
-        fixed_mask = torch.zeros(length, dtype=torch.float32, device=self.device)
-        
-        # Return the inputs
-        return {
-            'res_mask': res_mask.unsqueeze(0),  # Add batch dimension
-            'seq_idx': seq_idx.unsqueeze(0),
-            'fixed_mask': fixed_mask.unsqueeze(0),
-        }
-
-    def sample_with_cfg(self, embedding: torch.Tensor, length: int) -> Tuple[np.ndarray, List[np.ndarray]]:
-        """Sample a protein structure with classifier-free guidance.
-        
-        Args:
-            embedding: The embedding tensor to condition on.
-            length: The length of the protein to generate.
-            
-        Returns:
-            Tuple of (final structure, list of intermediate structures).
-        """
-        self._log.info(f"Generating protein with length {length} and CFG scale {self.cfg_scale}")
-        
-        # Prepare inputs
-        inputs = self._prepare_sample_inputs(length)
-        
-        # Move embedding to device and ensure it has batch dimension
-        embedding = embedding.to(self.device)
-        if embedding.dim() == 1:
-            embedding = embedding.unsqueeze(0)  # [1, embed_dim]
-        
-        # Compute timesteps
-        ts = torch.linspace(self.max_t, self.min_t, self.num_t, device=self.device)
-        
-        # Initialize noise
-        rigids_0 = rigid_utils.Rigid.identity(
-            num_rigids=length, 
-            device=self.device,
-            requires_grad=False,
-        )
-        
-        # Apply forward diffusion to get noised rigids at max_t
-        diffusion_out = self._diffuser.forward_marginal(
-            rigids_0=rigids_0,
-            t=self.max_t,
-            as_tensor_7=True,
-        )
-        
-        rigids_t = torch.tensor(diffusion_out['rigids_t'], device=self.device).unsqueeze(0)
-        
-        # Initialize trajectory
-        traj = [rigids_t.clone().cpu().numpy()]
-        
-        # Sampling loop
-        for i in range(self.num_t - 1):
-            t_i = ts[i]
-            t_next = ts[i + 1]
-            
-            # Prepare model inputs
-            curr_inputs = {**inputs}
-            curr_inputs['rigids'] = rigids_t
-            curr_inputs['t'] = torch.tensor([t_i], device=self.device)
-            
-            with torch.no_grad():
-                # Run the model with conditioning
-                curr_inputs['sequence'] = embedding
-                cond_out = self._model(curr_inputs)
-                
-                # Run the model without conditioning (empty embedding)
-                curr_inputs['sequence'] = torch.zeros_like(embedding)
-                uncond_out = self._model(curr_inputs)
-                
-                # Apply classifier-free guidance
-                rot_score = uncond_out['rot_score'] + self.cfg_scale * (cond_out['rot_score'] - uncond_out['rot_score'])
-                trans_score = uncond_out['trans_score'] + self.cfg_scale * (cond_out['trans_score'] - uncond_out['trans_score'])
-            
-            # Use the diffuser to take a step
-            rigids_t, _ = self._diffuser.reverse_sample(
-                rigids_t=rigids_t.squeeze(0),
-                rot_score=rot_score.squeeze(0),
-                trans_score=trans_score.squeeze(0),
-                t=t_i,
-                dt=t_i - t_next,
-                mask=inputs['res_mask'].squeeze(0),
-            )
-            
-            # Add batch dimension back
-            rigids_t = rigids_t.unsqueeze(0)
-            
-            # Add to trajectory
-            traj.append(rigids_t.clone().cpu().numpy())
-            
-            if (i + 1) % 10 == 0:
-                self._log.info(f"Sampling step {i + 1}/{self.num_t - 1}")
-        
-        # Convert final rigids to atom positions
-        final_rigids = rigid_utils.Rigid.from_tensor_7(rigids_t.squeeze(0))
-        ca_pos = final_rigids.get_trans().cpu().numpy()
-        
-        # Create full backbone using CA positions
-        bb_pos = all_atom.compute_backbone(ca_pos)
-        
-        return bb_pos, traj
-
-    def save_structure(self, positions: np.ndarray, output_path: str, name: str = "generated"):
-        """Save the generated structure to a PDB file.
-        
-        Args:
-            positions: The atomic positions.
-            output_path: The directory to save the structure to.
-            name: The name of the structure.
-        """
-        os.makedirs(output_path, exist_ok=True)
-        
-        # Create a mask for the atoms
-        atom_mask = np.ones(positions.shape[:-1])
-        
-        # Create a dummy aatype (all alanines)
-        aatype = np.zeros(positions.shape[0], dtype=np.int32)
-        
-        # Create a protein object
-        protein = au.create_full_prot(positions, atom_mask, aatype)
-        
-        # Save as PDB
-        pdb_path = os.path.join(output_path, f"{name}.pdb")
-        with open(pdb_path, 'w') as f:
-            f.write(au.to_pdb(protein))
-        
-        self._log.info(f"Saved structure to {pdb_path}")
-        return pdb_path
-
-    def run_inference(self, embedding_path: str, output_dir: str, num_samples: int = 10):
-        """Run inference with the specified embedding.
-        
-        Args:
-            embedding_path: Path to the embedding file.
-            output_dir: Directory to save the generated structures.
+            seq_embedding: The sequence embedding tensor.
+            seq_length: The length of the protein sequence.
             num_samples: Number of samples to generate.
+            
+        Returns:
+            List of generated trajectories.
         """
-        # Load embedding
-        embedding = self._load_embedding(embedding_path)
+        # Setup timesteps
+        timesteps = torch.linspace(
+            self.max_t, self.min_t, self.num_t, device=self.device)
         
-        # Determine protein length based on embedding name
-        if 'p15' in embedding_path.lower():
-            length = 110  # p15PAF length
-            name_prefix = 'p15'
-        elif 'ar' in embedding_path.lower():
-            length = 56   # AR length
-            name_prefix = 'ar'
-        else:
-            # Default to p15 length if can't determine
-            length = 110
-            name_prefix = 'unknown'
+        trajectories = []
         
-        # Create output directory
-        path = Path(output_dir)
-        path.mkdir(parents=True, exist_ok=True)
-        
-        # Save inference parameters
-        with open(path / 'inference_params.json', 'w') as f:
-            params = {
-                'embedding_path': embedding_path,
-                'cfg_scale': float(self.cfg_scale),
-                'min_t': float(self.min_t),
-                'max_t': float(self.max_t),
-                'num_t': int(self.num_t),
-                'num_samples': num_samples,
-                'protein_length': length,
-                'timestamp': time.strftime('%Y-%m-%d-%H-%M-%S')
-            }
-            json.dump(params, f, indent=2)
-        
-        # Generate samples
         for i in range(num_samples):
             self._log.info(f"Generating sample {i+1}/{num_samples}")
             
-            # Sample with classifier-free guidance
-            bb_pos, traj = self.sample_with_cfg(embedding, length)
+            # Sample from the reference distribution
+            rigids = self._diffuser.sample_ref(
+                n_samples=seq_length,
+                as_tensor_7=True
+            ).to(self.device)
             
-            # Save the structure
-            sample_name = f"{name_prefix}_cfg{self.cfg_scale:.1f}_sample{i+1}"
-            self.save_structure(bb_pos, output_dir, name=sample_name)
+            # Generate trajectory
+            trajectory = [rigids.clone()]
             
-            # Optionally save trajectory frames
+            # Iterative denoising
+            for j, t in enumerate(timesteps):
+                t_batch = torch.full((1,), t, device=self.device)
+                
+                # Need to run twice for CFG - once with conditioning, once without
+                with torch.no_grad():
+                    # Run with conditioning
+                    cond_output = self._model(
+                        rigids, 
+                        t_batch, 
+                        seq_embedding=seq_embedding
+                    )
+                    
+                    # Run without conditioning (null embedding)
+                    uncond_output = self._model(
+                        rigids, 
+                        t_batch, 
+                        seq_embedding=None
+                    )
+                    
+                    # Combine outputs with guidance scale
+                    rot_score = uncond_output['rot_score'] + self.cfg_scale * (
+                        cond_output['rot_score'] - uncond_output['rot_score'])
+                    trans_score = uncond_output['trans_score'] + self.cfg_scale * (
+                        cond_output['trans_score'] - uncond_output['trans_score'])
+                    
+                    # Update with the score
+                    rigids = self._diffuser.reverse_sample(
+                        rigids_t=rigids,
+                        rot_score=rot_score,
+                        trans_score=trans_score,
+                        t=t_batch,
+                        dt=timesteps[0] - timesteps[-1] if j == 0 else timesteps[j-1] - timesteps[j]
+                    )
+                    
+                # Save current state
+                trajectory.append(rigids.clone())
+                
+                if (j + 1) % 10 == 0 or j == len(timesteps) - 1:
+                    self._log.info(f"  Step {j+1}/{len(timesteps)}")
+            
+            trajectories.append(trajectory)
+            
+        return trajectories
+
+    def save_structure(self, positions, output_dir, name="structure"):
+        """Save the generated structure to a PDB file.
+        
+        Args:
+            positions: The backbone atom positions.
+            output_dir: Directory to save the output.
+            name: Name of the output file.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, f"{name}.pdb")
+        
+        # Create a simple PDB with the backbone atoms
+        with open(output_path, 'w') as f:
+            for i, (n, ca, c, o) in enumerate(positions):
+                # Write N atom
+                f.write(f"ATOM  {i*4+1:5d}  N   ALA A{i+1:4d}    "
+                        f"{n[0]:8.3f}{n[1]:8.3f}{n[2]:8.3f}"
+                        f"  1.00  0.00           N\n")
+                # Write CA atom
+                f.write(f"ATOM  {i*4+2:5d}  CA  ALA A{i+1:4d}    "
+                        f"{ca[0]:8.3f}{ca[1]:8.3f}{ca[2]:8.3f}"
+                        f"  1.00  0.00           C\n")
+                # Write C atom
+                f.write(f"ATOM  {i*4+3:5d}  C   ALA A{i+1:4d}    "
+                        f"{c[0]:8.3f}{c[1]:8.3f}{c[2]:8.3f}"
+                        f"  1.00  0.00           C\n")
+                # Write O atom
+                f.write(f"ATOM  {i*4+4:5d}  O   ALA A{i+1:4d}    "
+                        f"{o[0]:8.3f}{o[1]:8.3f}{o[2]:8.3f}"
+                        f"  1.00  0.00           O\n")
+            f.write("TER\nEND\n")
+        
+        self._log.info(f"Saved structure to {output_path}")
+        return output_path
+
+    def run_inference(self, embedding_path: str, output_dir: str, metadata: Optional[Dict] = None):
+        """Run inference to generate protein structures.
+        
+        Args:
+            embedding_path: Path to the sequence embedding file.
+            output_dir: Directory to save the output.
+            metadata: Optional metadata to save with the output.
+        """
+        self._log.info(f"Running inference with CFG scale {self.cfg_scale}")
+        
+        # Load the sequence embedding
+        seq_embedding = self._load_embedding(embedding_path)
+        
+        # Determine sequence length (can be inferred from embedding or provided)
+        seq_length = self._conf.inference.sequence_length
+        if seq_length is None:
+            # Try to infer from embedding properties or use a default
+            seq_length = 100  # Default length if not specified
+            self._log.warning(f"Sequence length not provided, using default: {seq_length}")
+        
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Save metadata
+        run_metadata = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "cfg_scale": self.cfg_scale,
+            "num_samples": self.num_samples,
+            "embedding_path": embedding_path,
+            "checkpoint_path": self._conf.inference.checkpoint_path,
+            "sequence_length": seq_length,
+            "min_t": self.min_t,
+            "max_t": self.max_t,
+            "num_t": self.num_t,
+        }
+        if metadata:
+            run_metadata.update(metadata)
+            
+        with open(os.path.join(output_dir, "metadata.json"), 'w') as f:
+            json.dump(run_metadata, f, indent=2)
+        
+        # Sample trajectories
+        trajectories = self._sample_diffused_positions(
+            seq_embedding, seq_length, self.num_samples)
+        
+        # Save the final structures
+        for i, trajectory in enumerate(trajectories):
+            final_rigid = trajectory[-1]
+            frame_rigids = rigid_utils.Rigid.from_tensor_7(final_rigid)
+            frame_ca_pos = frame_rigids.get_trans().cpu().numpy()
+            frame_bb_pos = all_atom.compute_backbone(frame_ca_pos)
+            
+            sample_name = f"sample_{i+1}"
+            self.save_structure(frame_bb_pos, output_dir, name=sample_name)
+            
+            # Optionally save trajectory frames if configured
             if self._conf.inference.save_trajectory:
-                traj_dir = os.path.join(output_dir, f"{sample_name}_traj")
+                traj_dir = os.path.join(output_dir, f"trajectory_{i+1}")
                 os.makedirs(traj_dir, exist_ok=True)
                 
-                for j, frame in enumerate(traj):
-                    # Convert rigid to atom positions
-                    if j % self._conf.inference.traj_save_frequency == 0:
-                        frame_rigids = rigid_utils.Rigid.from_tensor_7(frame.squeeze(0))
-                        frame_ca_pos = frame_rigids.get_trans().cpu().numpy()
-                        frame_bb_pos = all_atom.compute_backbone(frame_ca_pos)
-                        
-                        # Save the frame
-                        frame_name = f"frame_{j:03d}"
-                        self.save_structure(frame_bb_pos, traj_dir, name=frame_name)
+                # Save a subset of frames (e.g., every 10th)
+                frames_to_save = range(0, len(trajectory), max(1, len(trajectory) // 10))
+                for j in frames_to_save:
+                    frame = trajectory[j]
+                    frame_rigids = rigid_utils.Rigid.from_tensor_7(frame)
+                    frame_ca_pos = frame_rigids.get_trans().cpu().numpy()
+                    frame_bb_pos = all_atom.compute_backbone(frame_ca_pos)
+                    
+                    frame_name = f"frame_{j:03d}"
+                    self.save_structure(frame_bb_pos, traj_dir, name=frame_name)
         
-        self._log.info(f"Inference complete. Generated {num_samples} samples in {output_dir}")
+        self._log.info(f"Inference complete. Generated {self.num_samples} samples in {output_dir}")
 
 
-@hydra.main(version_base=None, config_path="../config", config_name="inference_cfg")
+@hydra.main(version_base=None, config_path="../config", config_name="finetune_cfg")
 def main(conf: DictConfig) -> None:
     """Main function for CFG inference.
     
@@ -394,24 +326,32 @@ def main(conf: DictConfig) -> None:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     
-    # Create the sampler
-    conf_overrides = {
-        'inference': {
-            'cfg_scale': conf.cfg_scale,
-            'num_samples': conf.num_samples,
+    # Override configuration with command line arguments
+    if hasattr(conf, 'inference'):
+        if hasattr(conf, 'cfg_scale'):
+            conf.inference.cfg_scale = conf.cfg_scale
+        if hasattr(conf, 'num_samples'):
+            conf.inference.num_samples = conf.num_samples
+    else:
+        # Ensure inference config exists
+        conf.inference = {
+            'cfg_scale': conf.cfg_scale if hasattr(conf, 'cfg_scale') else 1.0,
+            'num_samples': conf.num_samples if hasattr(conf, 'num_samples') else 5,
+            'min_t': 0.1,
+            'max_t': 1.0,
+            'num_t': 100,
+            'sequence_length': None,
+            'save_trajectory': False,
+            'checkpoint_path': 'weights/checkpoint.pth'
         }
-    }
     
-    sampler = CFGSampler(conf, conf_overrides)
+    # Create the sampler and run inference
+    sampler = CFGSampler(conf)
     
-    # Run inference
     sampler.run_inference(
         embedding_path=conf.embedding_path,
-        output_dir=conf.output_dir,
-        num_samples=conf.num_samples
+        output_dir=conf.output_dir
     )
-    
-    logger.info("Inference completed successfully!")
 
 
 if __name__ == "__main__":
