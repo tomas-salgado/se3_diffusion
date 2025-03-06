@@ -27,6 +27,8 @@ from data import all_atom
 from experiments import train_se3_diffusion
 from omegaconf import DictConfig, OmegaConf
 from openfold.utils import rigid_utils
+from model import score_network
+from data import se3_diffuser
 
 
 CA_IDX = residue_constants.atom_order['CA']
@@ -70,8 +72,14 @@ class CFGSampler:
         self._log.info(f"Loading model checkpoint from {self._conf.inference.checkpoint_path}")
         checkpoint = torch.load(self._conf.inference.checkpoint_path, map_location=self.device)
         
-        # Create the model
-        self._model = train_se3_diffusion.create_model(self._conf.model)
+        # Create diffuser first
+        self._diffuser = se3_diffuser.SE3Diffuser(self._conf.diffuser)
+        
+        # Create the model using the same approach as in train_se3_diffusion.py
+        self._model = score_network.ScoreNetwork(
+            self._conf.model, self._diffuser)
+        
+        # Load the state dict
         self._model.load_state_dict(checkpoint['model_state_dict'])
         self._model.to(self.device)
         self._model.eval()
