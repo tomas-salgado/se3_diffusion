@@ -77,8 +77,22 @@ class CFGSampler:
         # Handle DataParallel saved models
         model_state = {k.replace('module.', ''):v for k,v in model_state.items()}
         
+        # Find input dimension from checkpoint
+        input_dim = model_state['embedding_layer.node_embedder.0.weight'].shape[1]
+        self._log.info(f"Found input dimension in checkpoint: {input_dim}")
+        
+        # Explicitly update the model configuration to match checkpoint dimensions
+        # This is crucial to ensure compatibility
+        self._conf.model.input_dim = input_dim
+        
         # Create the model with the same configuration as during training
         self._model = score_network.ScoreNetwork(self._conf.model, self._diffuser)
+        
+        # Now we need to ensure the first embedding layer has the right input dimension
+        # This needs to happen BEFORE loading the state dict
+        import torch.nn as nn
+        node_embed_size = self._conf.model.node_embed_size
+        self._model.embedding_layer.node_embedder[0] = nn.Linear(input_dim, node_embed_size)
         
         # Load the state dict
         result = self._model.load_state_dict(model_state, strict=False)
