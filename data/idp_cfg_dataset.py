@@ -396,6 +396,8 @@ class LengthBasedBatchSampler:
         This function handles the special case of sequence embeddings and timesteps.
         For sequence embeddings, we stack them into a batch tensor.
         For timesteps, we ensure they maintain the correct shape.
+        
+        During validation, we also return a list of pdb names for evaluation.
         """
         result = {}
         
@@ -423,7 +425,20 @@ class LengthBasedBatchSampler:
             # Handle lists, strings, etc.
             else:
                 result[key] = values
-                
+        
+        # For validation, we need to return (features, pdb_names)
+        if not self.dataset.is_training:
+            # Generate dummy PDB names since we don't have actual filenames
+            # The format is p15_X or ar_X where X is the index
+            pdb_names = []
+            for i, sample in enumerate(batch):
+                is_p15 = sample.get('is_p15', torch.tensor(0.0)).item() > 0.5
+                prefix = "p15" if is_p15 else "ar"
+                pdb_names.append(f"{prefix}_{i}.pdb")
+            
+            return result, pdb_names
+            
+        # For training, just return the features
         return result
     
     def __iter__(self):
