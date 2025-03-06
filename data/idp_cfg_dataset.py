@@ -427,7 +427,7 @@ class LengthBasedBatchSampler:
                 result[key] = values
         
         # For validation, we need to return (features, pdb_names)
-        if not self.dataset.is_training:
+        if not self.dataset._is_training:
             # Generate dummy PDB names since we don't have actual filenames
             # The format is p15_X or ar_X where X is the index
             pdb_names = []
