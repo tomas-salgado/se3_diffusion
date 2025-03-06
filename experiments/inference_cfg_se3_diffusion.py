@@ -75,12 +75,20 @@ class CFGSampler:
         # Create diffuser first
         self._diffuser = se3_diffuser.SE3Diffuser(self._conf.diffuser)
         
-        # Create the model using the same approach as in train_se3_diffusion.py
+        # Create the model using ScoreNetwork directly
         self._model = score_network.ScoreNetwork(
             self._conf.model, self._diffuser)
         
-        # Load the state dict
-        self._model.load_state_dict(checkpoint['model_state_dict'])
+        # Load the state dict - UPDATED KEY FROM 'model_state_dict' TO 'model'
+        if 'model_state_dict' in checkpoint:
+            self._model.load_state_dict(checkpoint['model_state_dict'])
+        elif 'model' in checkpoint:
+            self._model.load_state_dict(checkpoint['model'])
+        else:
+            # Print the keys that are available in the checkpoint
+            self._log.info(f"Available keys in checkpoint: {list(checkpoint.keys())}")
+            raise KeyError(f"No model weights found in checkpoint. Available keys: {list(checkpoint.keys())}")
+        
         self._model.to(self.device)
         self._model.eval()
         
