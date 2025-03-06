@@ -72,6 +72,18 @@ class CFGSampler:
         self._log.info(f"Loading model checkpoint from {self._conf.inference.checkpoint_path}")
         checkpoint = torch.load(self._conf.inference.checkpoint_path, map_location=self.device)
         
+        # IMPORTANT: Update configuration for sequence conditioning
+        self._conf.model.use_sequence_conditioning = True
+        self._conf.model.conditioning_method = 'cross_attention'
+        
+        # Ensure sequence_embed config exists and is properly set up
+        if not hasattr(self._conf.model, 'sequence_embed'):
+            self._conf.model.sequence_embed = {}
+        
+        self._conf.model.sequence_embed.embed_dim = 256
+        self._conf.model.sequence_embed.adapt_dimensions = True
+        self._conf.model.sequence_embed.embedding_format = 'txt'
+        
         # Get model state
         if 'model_state_dict' in checkpoint:
             model_state = checkpoint['model_state_dict'] 
@@ -83,11 +95,11 @@ class CFGSampler:
         # Handle DataParallel saved models
         model_state = {k.replace('module.', ''):v for k,v in model_state.items()}
         
-        # CUSTOM APPROACH: Directly analyze the checkpoint to get dimensions
+        # Analyze the checkpoint to get dimensions
         input_dim = model_state['embedding_layer.node_embedder.0.weight'].shape[1]
         self._log.info(f"Found input dimension in checkpoint: {input_dim}")
         
-        # Modify model configuration directly
+        # Create model components
         from model import score_network
         from data import se3_diffuser
         import torch.nn as nn
@@ -95,11 +107,11 @@ class CFGSampler:
         # Create diffuser
         self._diffuser = se3_diffuser.SE3Diffuser(self._conf.diffuser)
         
-        # Create the model
+        # Create the model with updated configuration
         self._model = score_network.ScoreNetwork(
             self._conf.model, self._diffuser)
         
-        # CRITICAL FIX: Manually replace the first embedding layer to match the checkpoint dimension
+        # Replace the first embedding layer to match checkpoint dimensions
         node_embed_size = self._conf.model.node_embed_size
         self._model.embedding_layer.node_embedder[0] = nn.Linear(input_dim, node_embed_size)
         
