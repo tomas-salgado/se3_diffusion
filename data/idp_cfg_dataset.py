@@ -357,6 +357,11 @@ class IDPCFGDataset(Dataset):
             'positions': positions,                  # [L, 4, 3] - Atom positions
             'length': torch.tensor(length, dtype=torch.long),  # scalar
             'is_p15': torch.tensor(is_p15, dtype=torch.float32),  # Boolean flag
+            
+            # Add fields for evaluation
+            'aatype': torch.zeros(length, dtype=torch.long),  # [L] - Amino acid types (zeros as placeholder)
+            'atom37_pos': torch.zeros((length, 37, 3), dtype=torch.float32),  # [L, 37, 3] - All atom positions
+            'atom37_mask': torch.zeros((length, 37), dtype=torch.float32),  # [L, 37] - Mask for atom positions
         }
 
 class LengthBasedBatchSampler:
