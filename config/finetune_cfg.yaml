@@ -18,7 +18,7 @@ data:
   p15_embedding_path: embeddings/p15PAF_idr_embedding.txt
   ar_embedding_path: embeddings/ar_idr_embedding.txt
   
-training:
+experiment:
   batch_size: 32
   learning_rate: 1e-4
   num_epochs: 100
