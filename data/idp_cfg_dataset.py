@@ -198,37 +198,23 @@ class IDPCFGDataset(Dataset):
         return len(IDPCFGDataset._shared_data['p15_data']) + len(IDPCFGDataset._shared_data['ar_data'])
 
     def __getitem__(self, idx):
-        """Get a single sample from the dataset.
+        """Get a single sample from the dataset."""
+        # Determine if this is a P15 or AR sample
+        is_p15 = idx < len(IDPCFGDataset._shared_data['p15_data'])
         
-        Args:
-            idx: Index of the sample to get
-            
-        Returns:
-            Dictionary containing the sample data
-        """
-        # Determine which dataset to use based on the index
-        if idx < len(IDPCFGDataset._shared_data['p15_data']):
-            is_p15 = True
-            structure_idx = idx
-            structure = IDPCFGDataset._shared_data['p15_data'][structure_idx]
-            embedding_path = self.p15_embedding_path
-        else:
-            is_p15 = False
-            structure_idx = idx - len(IDPCFGDataset._shared_data['p15_data'])
-            structure = IDPCFGDataset._shared_data['ar_data'][structure_idx]
-            embedding_path = self.ar_embedding_path
+        # Get the actual index in the corresponding array
+        local_idx = idx if is_p15 else idx - len(IDPCFGDataset._shared_data['p15_data'])
         
-        # Get the embedding (cached at init time to avoid reloading)
-        if is_p15 and 'p15_embedding' in IDPCFGDataset._shared_data and IDPCFGDataset._shared_data['p15_embedding'] is not None:
+        # Retrieve the structure from the cached data
+        structure = IDPCFGDataset._shared_data['p15_data'][local_idx] if is_p15 else IDPCFGDataset._shared_data['ar_data'][local_idx]
+        
+        # Get the embedding based on p15/AR
+        if is_p15:
             embedding = IDPCFGDataset._shared_data['p15_embedding']
-        elif not is_p15 and 'ar_embedding' in IDPCFGDataset._shared_data and IDPCFGDataset._shared_data['ar_embedding'] is not None:
-            embedding = IDPCFGDataset._shared_data['ar_embedding']
         else:
-            # Load embedding if not cached
-            embedding = self._load_single_embedding(embedding_path, is_p15=is_p15)
-        
-        # Apply CFG dropout during training
-        use_pretrained = False
+            embedding = IDPCFGDataset._shared_data['ar_embedding']
+            
+        # Randomly apply CFG dropout during training
         if self._is_training and torch.rand(1) < self.cfg_dropout_prob:
             self._log.debug("Applying CFG dropout - using null embedding")
             # Zero out the embedding for CFG
@@ -296,6 +282,53 @@ class IDPCFGDataset(Dataset):
         # Sample a random timestep [0, 1] - keep as 1D tensor
         t = torch.rand(1, dtype=torch.float32)
         
+        # Import here to avoid circular imports
+        from data.se3_diffuser import SE3Diffuser 
+        import hydra
+        from omegaconf import OmegaConf
+        
+        # Create a SE3Diffuser to generate scores
+        # We'll use a dummy config for this
+        diffuser_config = OmegaConf.create({
+            "diffuse_trans": True,
+            "diffuse_rot": True,
+            "r3": {
+                "min_b": 0.1,
+                "max_b": 20.0,
+                "coordinate_scaling": 0.1
+            },
+            "so3": {
+                "num_omega": 1000,
+                "num_sigma": 1000,
+                "min_sigma": 0.1,
+                "max_sigma": 1.5,
+                "schedule": "logarithmic",
+                "cache_dir": ".cache/",
+                "use_cached_score": False
+            }
+        })
+        
+        # Create diffuser and generate scores
+        diffuser = SE3Diffuser(diffuser_config)
+        
+        # Apply diffusion to get scores
+        # First, create rigids object from tensor
+        rigids_0 = rigid_utils.Rigid.from_tensor_7(rigids_tensor)
+        
+        # Apply forward diffusion and get scores
+        diffusion_out = diffuser.forward_marginal(
+            rigids_0=rigids_0,
+            t=t.item(),
+            as_tensor_7=True
+        )
+        
+        # Extract scores and noised rigids
+        rot_score = torch.tensor(diffusion_out['rot_score'], dtype=torch.float32)
+        trans_score = torch.tensor(diffusion_out['trans_score'], dtype=torch.float32)
+        rigids_t = diffusion_out['rigids_t']
+        rot_score_scaling = torch.tensor(diffusion_out['rot_score_scaling'], dtype=torch.float32)
+        trans_score_scaling = torch.tensor(diffusion_out['trans_score_scaling'], dtype=torch.float32)
+        
         # Return the sample data with all required fields
         return {
             # Required inputs for SE(3) diffusion model
@@ -307,8 +340,15 @@ class IDPCFGDataset(Dataset):
             
             # Features for the score model
             'torsion_angles_sin_cos': torsion_angles,  # [L, 7, 2]
-            'rigids': rigids_tensor,                 # [L, 7]
-            'rigids_t': rigids_tensor,               # [L, 7] - for self-conditioning
+            'rigids': rigids_t if isinstance(rigids_t, torch.Tensor) else torch.tensor(rigids_t),  # [L, 7] - Noised rigids
+            'rigids_0': rigids_tensor,               # [L, 7] - Original rigids
+            'rigids_t': rigids_t if isinstance(rigids_t, torch.Tensor) else torch.tensor(rigids_t),  # [L, 7] - For self-conditioning
+            
+            # Added scores for loss computation
+            'rot_score': rot_score,                  # [L, 3] 
+            'trans_score': trans_score,              # [L, 3]
+            'rot_score_scaling': rot_score_scaling,  # [1]
+            'trans_score_scaling': trans_score_scaling,  # [1]
             
             # Conditioning information
             'sequence': embedding,                   # [embed_dim] - Raw embedding tensor
