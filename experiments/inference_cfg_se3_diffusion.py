@@ -46,7 +46,7 @@ class CFGSampler:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         # Create the diffuser first (same as in training)
-        self._diffuser = se3_diffuser.SE3Diffuser(self._conf.diffuser, device=self.device)
+        self._diffuser = se3_diffuser.SE3Diffuser(self._conf.diffuser)
         
         # Create and load the model (similar to training)
         self._load_model()
