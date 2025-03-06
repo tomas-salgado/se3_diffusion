@@ -4,7 +4,7 @@ This script implements inference with classifier-free guidance for the SE(3) dif
 It allows generating protein structures conditioned on sequence embeddings with various guidance scales.
 
 Sample command:
-> python experiments/inference_cfg_se3_diffusion.py inference.cfg_scale=7.5 embedding_path=embeddings/p15_idr_embedding.txt
+> python experiments/inference_cfg_se3_diffusion.py checkpoint_path=weights/checkpoint.pth embedding_path=embeddings/p15_idr_embedding.txt
 
 """
 
@@ -255,7 +255,7 @@ class CFGSampler:
         seq_embedding = self._load_embedding(embedding_path)
         
         # Determine sequence length (can be inferred from embedding or provided)
-        seq_length = self._conf.inference.sequence_length
+        seq_length = self._conf.inference.sequence_length if hasattr(self._conf.inference, 'sequence_length') else None
         if seq_length is None:
             # Try to infer from embedding properties or use a default
             seq_length = 100  # Default length if not specified
@@ -315,7 +315,7 @@ class CFGSampler:
         self._log.info(f"Inference complete. Generated {self.num_samples} samples in {output_dir}")
 
 
-@hydra.main(version_base=None, config_path="../config", config_name="finetune_cfg")
+@hydra.main(version_base=None, config_path="../config", config_name="inference_cfg")
 def main(conf: DictConfig) -> None:
     """Main function for CFG inference.
     
@@ -326,24 +326,13 @@ def main(conf: DictConfig) -> None:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     
-    # Override configuration with command line arguments
-    if hasattr(conf, 'inference'):
-        if hasattr(conf, 'cfg_scale'):
-            conf.inference.cfg_scale = conf.cfg_scale
-        if hasattr(conf, 'num_samples'):
-            conf.inference.num_samples = conf.num_samples
-    else:
-        # Ensure inference config exists
-        conf.inference = {
-            'cfg_scale': conf.cfg_scale if hasattr(conf, 'cfg_scale') else 1.0,
-            'num_samples': conf.num_samples if hasattr(conf, 'num_samples') else 5,
-            'min_t': 0.1,
-            'max_t': 1.0,
-            'num_t': 100,
-            'sequence_length': None,
-            'save_trajectory': False,
-            'checkpoint_path': 'weights/checkpoint.pth'
-        }
+    # Update inference parameters from command line arguments if provided
+    if hasattr(conf, 'cfg_scale'):
+        conf.inference.cfg_scale = conf.cfg_scale
+    if hasattr(conf, 'num_samples'):
+        conf.inference.num_samples = conf.num_samples
+    if hasattr(conf, 'checkpoint_path'):
+        conf.inference.checkpoint_path = conf.checkpoint_path
     
     # Create the sampler and run inference
     sampler = CFGSampler(conf)
