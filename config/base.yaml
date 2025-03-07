@@ -102,7 +102,7 @@ experiment:
   # How many steps to checkpoint between.
   ckpt_freq: 10000
   # Take early checkpoint at step 100. Helpful for catching eval bugs early.
-  early_ckpt: True
+  early_ckpt: False
 
   # Checkpoint directory to warm start from.
   warm_start: null
