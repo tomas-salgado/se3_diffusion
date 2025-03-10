@@ -18,6 +18,6 @@ inference:
 
 # Command-line parameters (can be overridden)
 output_dir: "cfg_outputs"     # Directory to save generated structures
-embedding_path: "embeddings/p15_idr_embedding.txt"  # Path to embedding file
+embedding_path: "embeddings/p15PAF_idr_embedding.txt"  # Path to embedding file
 cfg_scale: 5.0                # Guidance scale (can override the default)
 num_samples: 10               # Number of samples to generate 
