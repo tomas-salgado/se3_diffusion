@@ -23,4 +23,4 @@ experiment:
   learning_rate: 1e-4
   num_epochs: 100
   cfg_dropout_prob: 0.1 
-  ckpt_freq: 500
+  ckpt_freq: 5000
