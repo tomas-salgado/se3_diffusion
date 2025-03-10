@@ -20,7 +20,7 @@ data:
   
 experiment:
   batch_size: 32
-  learning_rate: 1e-4
+  learning_rate: 5e-5
   num_epochs: 100
   cfg_dropout_prob: 0.1 
   ckpt_freq: 5000
