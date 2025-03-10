@@ -62,26 +62,29 @@ def save_structure(positions, output_dir, name="structure"):
     np.save(output_path, positions.cpu().numpy())
     logger.info(f"Saved structure to {output_path}")
 
-@hydra.main(version_base=None, config_path="../config", config_name="finetune_cfg")
+@hydra.main(version_base=None, config_path="../config", config_name="inference_cfg")
 def main(conf: DictConfig):
     """Main inference function."""
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="SE(3) diffusion inference")
-    parser.add_argument("--checkpoint_path", type=str, default='weights/checkpoint.pth', help="Path to model checkpoint")
-    parser.add_argument("--embedding_path", type=str, default='embeddings/ar_idr_embedding.txt', help="Path to sequence embedding")
-    parser.add_argument("--output_dir", type=str, default='results_cfg/inference_results', help="Directory to save generated structures")
-    parser.add_argument("--cfg_scale", type=float, default=1.0, help="Guidance scale")
-    parser.add_argument("--num_samples", type=int, default=5, help="Number of samples to generate")
-    parser.add_argument("--min_t", type=float, default=0.01, help="Minimum timestep")
-    parser.add_argument("--max_t", type=float, default=1.0, help="Maximum timestep")
-    parser.add_argument("--num_t", type=int, default=100, help="Number of timesteps")
-    args = parser.parse_args()
-    
     # Use CUDA if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # Update config with checkpoint path
-    conf.model.checkpoint = args.checkpoint_path
+    # Extract parameters from config
+    checkpoint_path = conf.inference.checkpoint_path
+    embedding_path = conf.embedding_path
+    output_dir = conf.output_dir
+    cfg_scale = conf.cfg_scale
+    num_samples = conf.num_samples
+    min_t = conf.inference.min_t
+    max_t = conf.inference.max_t
+    num_t = conf.inference.num_t
+    
+    # Log configuration
+    logger.info(f"Running inference with:")
+    logger.info(f"  Checkpoint: {checkpoint_path}")
+    logger.info(f"  Embedding: {embedding_path}")
+    logger.info(f"  Output directory: {output_dir}")
+    logger.info(f"  CFG scale: {cfg_scale}")
+    logger.info(f"  Samples: {num_samples}")
     
     # Create experiment (this will load the model)
     experiment = CFGExperiment(conf)
@@ -91,18 +94,18 @@ def main(conf: DictConfig):
     diffuser = experiment.exp.diffuser
     
     # Load sequence embedding
-    seq_embedding = load_embedding(args.embedding_path)
+    seq_embedding = load_embedding(embedding_path)
     seq_embedding = seq_embedding.to(device)
     
     # Set up sampling
-    timesteps = torch.linspace(args.max_t, args.min_t, args.num_t, device=device)
+    timesteps = torch.linspace(max_t, min_t, num_t, device=device)
     
     # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     
     # Generate samples
-    for sample_idx in range(args.num_samples):
-        logger.info(f"Generating sample {sample_idx+1}/{args.num_samples}")
+    for sample_idx in range(num_samples):
+        logger.info(f"Generating sample {sample_idx+1}/{num_samples}")
         
         # Get sequence length from embedding
         sequence_length = seq_embedding.shape[1] if seq_embedding.dim() > 1 else 1
@@ -134,7 +137,7 @@ def main(conf: DictConfig):
             # Run with conditioning
             with torch.no_grad():
                 # Run model inference
-                output = model(input_feats, cfg_scale=args.cfg_scale)
+                output = model(input_feats, cfg_scale=cfg_scale)
                 
                 # Update rigids with model prediction
                 rigids = output['rigids_0_pred']
@@ -147,10 +150,10 @@ def main(conf: DictConfig):
                 trajectory.append(rigids.clone())
         
         # Save final structure
-        save_structure(rigids, args.output_dir, name=f"sample_{sample_idx}")
+        save_structure(rigids, output_dir, name=f"sample_{sample_idx}")
         
         # Optionally save trajectory
-        # np.save(os.path.join(args.output_dir, f"trajectory_{sample_idx}.npy"), 
+        # np.save(os.path.join(output_dir, f"trajectory_{sample_idx}.npy"), 
         #         torch.stack(trajectory).cpu().numpy())
 
 if __name__ == "__main__":
