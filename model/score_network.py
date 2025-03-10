@@ -7,6 +7,8 @@ from data import utils as du
 from data import all_atom
 from model import ipa_pytorch
 import functools as fn
+from model.sequence_embedder import SequenceEmbedder
+
 
 Tensor = torch.Tensor
 
@@ -227,7 +229,6 @@ class ScoreNetwork(nn.Module):
         self.use_sequence_conditioning = False
         if hasattr(self._model_conf, 'use_sequence_conditioning') and self._model_conf.use_sequence_conditioning:
             self.use_sequence_conditioning = True
-            from model.sequence_embedder import SequenceEmbedder
             self.sequence_embedder = SequenceEmbedder(model_conf)
             
             # Add dropout for classifier-free guidance
