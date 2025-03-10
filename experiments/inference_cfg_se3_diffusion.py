@@ -138,12 +138,12 @@ def main(conf: DictConfig):
             
             # Create input features
             input_feats = {
-                'rigids_t': rigids,
+                'rigids_t': sample_ref_output['rigids_t'],
                 't': t_batch,
-                'res_mask': torch.ones(sequence_length, device=device),
-                'fixed_mask': torch.zeros(sequence_length, device=device),
-                'sc_ca_t': torch.zeros(sequence_length, 3, device=device),
-                'seq_idx': torch.arange(sequence_length, device=device),
+                'res_mask': torch.ones(sequence_length, device=device).unsqueeze(0),
+                'fixed_mask': torch.zeros(sequence_length, device=device).unsqueeze(0),
+                'sc_ca_t': torch.zeros(1, sequence_length, 3, device=device),
+                'seq_idx': torch.arange(sequence_length, device=device).unsqueeze(0),
                 'seq_embedding': seq_embedding
             }
             
