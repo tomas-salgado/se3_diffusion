@@ -111,10 +111,23 @@ def main(conf: DictConfig):
         sequence_length = seq_embedding.shape[1] if seq_embedding.dim() > 1 else 1
         
         # Sample from reference distribution
-        rigids = diffuser.sample_ref(
+        sample_ref_output = diffuser.sample_ref(
             n_samples=sequence_length,
             as_tensor_7=True
-        ).to(device)
+        )
+
+        # Print the type and keys if it's a dictionary
+        print(f"Type of sample_ref_output: {type(sample_ref_output)}")
+        if isinstance(sample_ref_output, dict):
+            print(f"Keys in sample_ref_output: {list(sample_ref_output.keys())}")
+            # Print the first key's value type
+            first_key = list(sample_ref_output.keys())[0]
+            print(f"Type of {first_key}: {type(sample_ref_output[first_key])}")
+        else:
+            print(f"sample_ref_output is not a dictionary")
+
+        # For now, just to debug, let's create a dummy tensor
+        rigids = torch.zeros((sequence_length, 7), device=device)
         
         # Generate trajectory
         trajectory = [rigids.clone()]
