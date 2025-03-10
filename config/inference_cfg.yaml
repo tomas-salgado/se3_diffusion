@@ -7,7 +7,7 @@ defaults:
 
 # Inference-specific settings
 inference:
-  checkpoint_path: "/outputs/checkpoints/step_10000.pth"  # Path to the trained model checkpoint
+  checkpoint_path: "/outputs/ckpt/baseline/10D_03M_2025Y_17h_22m_40s/step_5000.pth"  # Path to the trained model checkpoint
   min_t: 0.01                # Minimum timestep for sampling
   max_t: 1.0                 # Maximum timestep for sampling
   num_t: 100                 # Number of timesteps for sampling
