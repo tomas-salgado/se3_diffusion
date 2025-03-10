@@ -95,6 +95,14 @@ def main(conf: DictConfig):
     
     # Load sequence embedding
     seq_embedding = load_embedding(embedding_path)
+    logger.info(f"Original embedding shape: {seq_embedding.shape}")
+
+    # Ensure embedding is 2D (batch_size, embed_dim)
+    if seq_embedding.dim() == 1:
+        seq_embedding = seq_embedding.unsqueeze(0)
+    logger.info(f"Reshaped embedding: {seq_embedding.shape}")
+
+    # Move to device
     seq_embedding = seq_embedding.to(device)
     
     # Set up sampling
@@ -116,51 +124,34 @@ def main(conf: DictConfig):
             as_tensor_7=True
         )
 
-        # Print the type and keys if it's a dictionary
-        print(f"Type of sample_ref_output: {type(sample_ref_output)}")
-        if isinstance(sample_ref_output, dict):
-            print(f"Keys in sample_ref_output: {list(sample_ref_output.keys())}")
-            # Print the first key's value type
-            first_key = list(sample_ref_output.keys())[0]
-            print(f"Type of {first_key}: {type(sample_ref_output[first_key])}")
-        else:
-            print(f"sample_ref_output is not a dictionary")
+        # Move the tensor to the device
+        rigids_t = sample_ref_output['rigids_t'].to(device)
 
-        # For now, just to debug, let's create a dummy tensor
-        rigids = torch.zeros((sequence_length, 7), device=device)
+        # Create input features - ensure all tensors are on the same device
+        input_feats = {
+            'rigids_t': rigids_t,
+            't': timesteps[0],
+            'res_mask': torch.ones(sequence_length, device=device).unsqueeze(0),
+            'fixed_mask': torch.zeros(sequence_length, device=device).unsqueeze(0),
+            'sc_ca_t': torch.zeros(1, sequence_length, 3, device=device),
+            'seq_idx': torch.arange(sequence_length, device=device).unsqueeze(0),
+            'seq_embedding': seq_embedding
+        }
         
-        # Generate trajectory
-        trajectory = [rigids.clone()]
-        
-        # Iterative denoising
-        for step_idx, t in enumerate(timesteps):
-            t_batch = torch.full((1,), t, device=device)
+        # Run with conditioning
+        with torch.no_grad():
+            # Run model inference
+            output = model(input_feats, cfg_scale=cfg_scale)
             
-            # Create input features
-            input_feats = {
-                'rigids_t': sample_ref_output['rigids_t'],
-                't': t_batch,
-                'res_mask': torch.ones(sequence_length, device=device).unsqueeze(0),
-                'fixed_mask': torch.zeros(sequence_length, device=device).unsqueeze(0),
-                'sc_ca_t': torch.zeros(1, sequence_length, 3, device=device),
-                'seq_idx': torch.arange(sequence_length, device=device).unsqueeze(0),
-                'seq_embedding': seq_embedding
-            }
+            # Update rigids with model prediction
+            rigids = output['rigids_0_pred']
             
-            # Run with conditioning
-            with torch.no_grad():
-                # Run model inference
-                output = model(input_feats, cfg_scale=cfg_scale)
-                
-                # Update rigids with model prediction
-                rigids = output['rigids_0_pred']
-                
-                # Save intermediate step if needed
-                if (step_idx + 1) % 10 == 0:
-                    logger.info(f"  Step {step_idx+1}/{len(timesteps)}")
-                
-                # Add to trajectory
-                trajectory.append(rigids.clone())
+            # Save intermediate step if needed
+            if (0 + 1) % 10 == 0:
+                logger.info(f"  Step {0+1}/{len(timesteps)}")
+            
+            # Add to trajectory
+            trajectory = [rigids.clone()]
         
         # Save final structure
         save_structure(rigids, output_dir, name=f"sample_{sample_idx}")
