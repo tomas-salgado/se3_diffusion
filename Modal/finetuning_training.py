@@ -39,7 +39,7 @@ def run_finetuning():
     os.system("git clone https://github.com/tomas-salgado/se3_diffusion")
     os.chdir("se3_diffusion")
     
-    # Download MD data from Google Drive
+    # Download data from Google Drive
     import gdown
     url = "https://drive.google.com/file/d/1uNeCkgqEe_qNhoAnsE3faZmfTtGrAoMe/view?usp=drive_link"
     output = "PED00016e001.pdb"
@@ -52,7 +52,13 @@ def run_finetuning():
     # url = "https://drive.google.com/file/d/1Y_bkr-YHdgvF4S3Cuxh-Qa2-AVwdpH_W/view?usp=drive_link"
     # output = "Tau5R2R3_apo.pdb"
     # gdown.download(url=url, output=output, fuzzy=True)
-    
+
+    # # Download sequence embeddings for IDRs
+    # os.makedirs("embeddings", exist_ok=True)
+    # url = "YOUR_EMBEDDINGS_URL_HERE"  # Replace with your embeddings URL
+    # output = "embeddings/idr_embeddings.pkl"
+    # gdown.download(url=url, output=output, fuzzy=True)
+
     # Create directories for outputs
     os.makedirs("ckpt", exist_ok=True)
     os.makedirs("eval_outputs", exist_ok=True)
@@ -77,12 +83,17 @@ def run_finetuning():
     sync_thread = threading.Thread(target=sync_outputs, daemon=True)
     sync_thread.start()
     
-    # Run fine-tuning with more frequent checkpoints
+    # Run fine-tuning with sequence conditioning
     os.system(
         "micromamba run -n se3 python experiments/finetune_se3_diffusion.py "
         "experiment.use_wandb=True "
-        "experiment.ckpt_epochs=1 "  # Save checkpoint every epoch
-        "experiment.eval_epochs=2"    # Evaluate every 2 epochs
+        "experiment.ckpt_epochs=1 "
+        "experiment.eval_epochs=2 "
+        "model.use_sequence_conditioning=True "
+        "model.conditioning_method=cross_attention "
+        "model.sequence_embed.embed_dim=256 "  # Make sure this matches your embedding dimension
+        "model.sequence_embed.embedding_path=embeddings/p15PAF_idr_embedding.txt"  # Your text file path
+        "model.sequence_embed.embedding_format=txt"  # Specify text format
     )
     
     # Final sync of outputs to volume

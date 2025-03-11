@@ -34,11 +34,16 @@ def run_cfg_inference():
     os.chdir("se3_diffusion")
     
     # Create directories
-    os.makedirs("embeddings", exist_ok=True)
+    os.makedirs("weights", exist_ok=True)
     
-    # Copy embeddings from volume to local directory
-    shutil.copy2("/outputs/embeddings/p15_idr_embedding.txt", "embeddings/p15_idr_embedding.txt")
-    shutil.copy2("/outputs/embeddings/ar_idr_embedding.txt", "embeddings/ar_idr_embedding.txt")
+    # Copy weights from Modal storage volume to local directory
+    weights_src = "/outputs/ckpt/baseline/10D_03M_2025Y_17h_22m_40s/step_5000.pth"
+    weights_dst = "weights/checkpoint.pth"
+    if os.path.exists(weights_src):
+        shutil.copy2(weights_src, weights_dst)
+        print(f"Successfully loaded weights from Modal volume at {weights_src}")
+    else:
+        raise FileNotFoundError(f"Weights file not found in Modal volume at {weights_src}")
     
     # Create output directory for generated structures
     output_base_dir = "cfg_inference_outputs"
@@ -49,7 +54,7 @@ def run_cfg_inference():
     
     # Run inference for each embedding and guidance scale
     embeddings = [
-        ("embeddings/p15_idr_embedding.txt", "p15"),
+        ("embeddings/p15PAF_idr_embedding.txt", "p15"),
         ("embeddings/ar_idr_embedding.txt", "ar")
     ]
     
@@ -60,10 +65,10 @@ def run_cfg_inference():
             # Create output directory for this run
             output_dir = os.path.join(output_base_dir, f"{name}_cfg{cfg_scale:.1f}")
             
-            # Run inference with the new CFG inference script
+            # Run inference with the new CFG inference script, now using local weights path
             cmd = (
-                f"micromamba run -n se3 python experiments/inference_cfg_se3_diffusion.py "
-                f"inference.checkpoint_path=/outputs/checkpoints/step_10000.pth "
+                f"cd $(pwd) && micromamba run -n se3 "
+                f"python -m experiments.inference_cfg_se3_diffusion "
                 f"embedding_path={embedding_path} "
                 f"output_dir={output_dir} "
                 f"cfg_scale={cfg_scale} "
